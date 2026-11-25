@@ -9,8 +9,11 @@ itself. It finds its address, obtains an HTTPS certificate from Let's
 Encrypt, installs the node and shows a status page. Nobody logs in, and
 nothing is typed.
 
+[![Build](https://github.com/FortisNet/node-os/actions/workflows/build.yml/badge.svg)](https://github.com/FortisNet/node-os/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 > **Status: early.** The images work end to end and are tested, but there is
-> no published release yet, and the node inside runs in development mode.
+> no numbered release yet, and the node inside runs in development mode.
 > Expect changes. See [What is not done yet](#what-is-not-done-yet).
 
 ## What you get
@@ -33,8 +36,15 @@ package and file, with the reason it is there.
 
 ## Quick start
 
-There are no published images yet, so today you [build them](#building)
-first.
+Images are built by this repository's pipeline and published on the
+[releases page](https://github.com/FortisNet/node-os/releases): numbered
+releases, and **edge**, rebuilt from every commit on `main`. The container
+images are also at `ghcr.io/fortisnet/node-os`.
+[docs/releasing.md](docs/releasing.md) shows how to check a download. You
+can also [build them yourself](#building).
+
+> Until a signed node release is pinned for the pipeline, the published
+> builds hold the orchestrator only, and images are built locally.
 
 ### On a cloud, from the disk image
 
@@ -49,14 +59,15 @@ first.
 ### On a server with Docker
 
 ```sh
-docker load -i fortis-node-os-x86_64-COMMIT.docker.tar.gz     # the aarch64 file on an ARM server
 docker run -d --name fortis-node --restart unless-stopped \
   --privileged --init --stop-timeout 240 \
   -p 80:80 -p 443:443 \
   -v fortis-data:/var/lib/fortis \
-  fortis-node-os:COMMIT-x86_64                                # or COMMIT-aarch64
+  ghcr.io/fortisnet/node-os:edge
 docker logs -f fortis-node
 ```
+
+Docker picks the image for the server's processor, Intel/AMD or ARM.
 
 The server must be reachable from the internet on ports 80 and 443. Each
 option is explained in [image/README.md](image/README.md#the-container-packaging).
@@ -129,6 +140,7 @@ answers 200 only when everything is healthy.
 | [docs/backup.md](docs/backup.md) | Backup and restore |
 | [image/README.md](image/README.md) | Exactly what is in the images, and why |
 | [docs/development.md](docs/development.md) | Layout of the code, the gate, release builds and the rules the design keeps |
+| [docs/releasing.md](docs/releasing.md) | What the pipeline builds and publishes, how to check a download, and how a release is made |
 
 ## Building
 
@@ -148,8 +160,11 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 
 ## What is not done yet
 
-- **Published images and a release store.** There is nowhere to download an
-  image from yet, and no public store that hosts fetch node updates from.
+- **A signed node release for the images.** Until one is pinned
+  ([docs/releasing.md](docs/releasing.md#the-node-release-inside-the-images)),
+  the pipeline publishes the orchestrator only and the images must be built
+  locally. There is also no public store yet that hosts fetch node updates
+  from.
 - **Updating the system itself.** The node is updated by the orchestrator.
   The orchestrator and the Alpine base are not: today that means a new
   image.

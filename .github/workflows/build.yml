@@ -1,0 +1,285 @@
+# Verify, build, test and publish.
+#
+#   pull request      verify, build and test; nothing is published
+#   push to main      the same, then published as the rolling "edge" pre-release
+#   tag vX.Y.Z        the same, then published as release vX.Y.Z
+#
+# Every action is pinned to a commit. Jobs get no permissions beyond reading
+# the repository, except the one job that publishes.
+name: Build
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  # A newer push replaces an older run, except while publishing a release.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      channel: ${{ steps.plan.outputs.channel }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Decide what this run builds and publishes
+        id: plan
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          short=$(git rev-parse HEAD | cut -c1-12)
+          case "$REF" in
+            refs/tags/v*) version=$REF_NAME channel=release ;;
+            refs/heads/main) version=$short; if [ "$EVENT" = push ]; then channel=edge; else channel=none; fi ;;
+            *) version=$short channel=none ;;
+          esac
+          # Images need a node release to put inside. Until one is pinned in
+          # image/node-release.conf, only the orchestrator is built.
+          if [ -f image/node-release.conf ] && [ -f image/release-public.pem ]; then images=yes; else images=no; fi
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "images=$images"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version \`$version\`, channel \`$channel\`, images: $images" >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build with two compilers, run every test, analyse and lint
+        run: make verify
+      - name: Keep the report and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verify-report
+          path: |
+            build-verify/report.json
+            build-verify/logs/
+          retention-days: 14
+
+  orchestrator:
+    name: Orchestrator (${{ matrix.architecture }})
+    needs: [plan, verify]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-latest
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      ARCHITECTURE: ${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A release is built only from files with a passing report in the same
+      # checkout, so the gate runs here too, on this processor architecture.
+      - name: Verify on this architecture
+        run: make verify
+      - name: Hardened static release
+        run: ./build-release.sh "$VERSION" "$ARCHITECTURE"
+      - name: Pack it, keeping file modes
+        run: |
+          mkdir -p out
+          tar -C "dist/$VERSION" -czf "out/fortis-node-os-orchestrator-$ARCHITECTURE-$VERSION.tar.gz" "$ARCHITECTURE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: orchestrator-${{ matrix.architecture }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: error
+
+  images:
+    name: Images
+    needs: [plan, orchestrator]
+    if: needs.plan.outputs.images == 'yes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: orchestrator-*
+          path: ${{ runner.temp }}/orchestrator
+          merge-multiple: true
+      - name: Unpack the orchestrator releases
+        env:
+          PACKED: ${{ runner.temp }}/orchestrator
+        run: |
+          mkdir -p "dist/$VERSION"
+          for architecture in x86_64 aarch64; do
+            tar -C "dist/$VERSION" -xzf "$PACKED/fortis-node-os-orchestrator-$architecture-$VERSION.tar.gz"
+          done
+      - name: Fetch the pinned, signed node release
+        run: ./image/fetch-node-release.sh
+      - name: Build the disk image and both container images
+        run: ./image/build-image.sh dist/node-release image/release-public.pem "dist/$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images
+          path: |
+            dist/image/fortis-node-os-*
+          retention-days: 14
+          if-no-files-found: error
+
+  test-images:
+    name: Test container image (${{ matrix.architecture }})
+    needs: [plan, images]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-latest
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: images
+          path: dist/image
+      # First start to a node answering over HTTPS, beside a stand-in
+      # certificate authority, on the image's own processor architecture.
+      - name: Run the image end to end
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          file=$(ls dist/image/fortis-node-os-"$ARCHITECTURE"-*.docker.tar.gz)
+          tag=$(docker load -i "$file" | sed -n 's/^Loaded image: //p')
+          ./image/test-container.sh "$tag"
+
+  publish:
+    name: Publish
+    needs: [plan, orchestrator, images, test-images]
+    # Only pushes publish. Images are optional (see the plan job); when they
+    # were built they must also have passed their test.
+    if: >-
+      always() && needs.plan.outputs.channel != 'none' &&
+      needs.orchestrator.result == 'success' &&
+      (needs.plan.outputs.images == 'no' ||
+       (needs.images.result == 'success' && needs.test-images.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write       # create the release and its tag
+      packages: write       # push container images to ghcr.io
+      id-token: write       # sign the provenance statements
+      attestations: write   # store them
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      IMAGES: ${{ needs.plan.outputs.images }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: orchestrator-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.IMAGES == 'yes'
+        with:
+          name: images
+          path: release
+      - name: Write the checksum list
+        working-directory: release
+        run: |
+          # One list for everything; the per-file lists are folded into it.
+          find . -maxdepth 1 -name '*.sha256' -delete
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
+          mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest where the files were built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+      - name: Push the container images
+        if: env.IMAGES == 'yes'
+        id: registry
+        env:
+          ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          name=ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          commit=$(git rev-parse HEAD | cut -c1-12)
+          for architecture in x86_64 aarch64; do
+            loaded=$(docker load -i release/fortis-node-os-"$architecture"-*.docker.tar.gz | sed -n 's/^Loaded image: //p')
+            docker tag "$loaded" "$name:$commit-$architecture"
+            docker push "$name:$commit-$architecture"
+          done
+          # One name for both processor families: Docker picks the right one.
+          if [ "$CHANNEL" = release ]; then tags="$VERSION latest"; else tags=edge; fi
+          for tag in $commit $tags; do
+            docker buildx imagetools create --tag "$name:$tag" "$name:$commit-x86_64" "$name:$commit-aarch64"
+          done
+          digest=$(docker buildx imagetools inspect "$name:$commit" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          {
+            echo "name=$name"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest the container image
+        if: env.IMAGES == 'yes'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.registry.outputs.digest }}
+          push-to-registry: true
+      - name: Publish the release
+        env:
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          notes=$(mktemp)
+          {
+            if [ "$CHANNEL" = edge ]; then
+              echo "Built from the newest commit on \`main\` ($SHA). It is replaced by every push and is meant for trying things out, not for running a node you depend on."
+            else
+              echo "Release $VERSION, built from $SHA."
+            fi
+            echo
+            if [ "$IMAGES" = yes ]; then
+              echo "| File | For |"
+              echo "| --- | --- |"
+              echo "| \`fortis-node-os-x86_64-*.qcow2\` | A new virtual machine on a cloud |"
+              echo "| \`fortis-node-os-x86_64-*.docker.tar.gz\` | Docker on an Intel or AMD server |"
+              echo "| \`fortis-node-os-aarch64-*.docker.tar.gz\` | Docker on an ARM server |"
+              echo "| \`fortis-node-os-orchestrator-*.tar.gz\` | The orchestrator alone, for building your own image |"
+              echo
+              echo "The container images are also at \`ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')\`."
+            else
+              echo "This build holds the orchestrator only. Images are built once a signed node release is pinned in \`image/node-release.conf\`."
+            fi
+            echo
+            echo "Check a download before using it: \`sha256sum -c SHA256SUMS --ignore-missing\`, and \`gh attestation verify FILE --repo $REPOSITORY\` to confirm it was built here from this commit. See docs/releasing.md."
+          } > "$notes"
+          if [ "$CHANNEL" = edge ]; then
+            # The rolling pre-release: its tag moves to the commit just built.
+            gh release delete edge --cleanup-tag --yes 2>/dev/null || true
+            gh release create edge --target "$SHA" --prerelease --title "Edge (main)" --notes-file "$notes" release/*
+          else
+            gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file "$notes" --generate-notes release/*
+          fi

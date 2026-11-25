@@ -1,0 +1,10 @@
+# Keep the pinned GitHub Actions current. Each update arrives as a pull
+# request, which runs the whole pipeline before it can be merged.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

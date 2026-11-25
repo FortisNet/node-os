@@ -96,7 +96,7 @@ tool-tests: all
 	python3 sandbox/tests/sandbox_cli_test.py $(BUILD)/fortis-sandbox
 	python3 sandbox/tests/sandbox_service_test.py
 	python3 sandbox/tests/gvisor_package_test.py
-	shellcheck tools/fetch-mbedtls.sh image/build-bootcheck-image.sh image/build-image.sh image/test-container.sh image/files/fortis image/files/container-start.sh image/bootcheck/fortis-bootcheck.sh image/files/manage-native-node.sh image/files/run-native-service.sh image/files/fortis-native.openrc build-release.sh sign-release.sh sandbox/test-linux-sandboxes.sh
+	shellcheck tools/fetch-mbedtls.sh image/build-bootcheck-image.sh image/build-image.sh image/fetch-node-release.sh image/test-container.sh image/files/fortis image/files/container-start.sh image/bootcheck/fortis-bootcheck.sh image/files/manage-native-node.sh image/files/run-native-service.sh image/files/fortis-native.openrc build-release.sh sign-release.sh sandbox/test-linux-sandboxes.sh
 test: unit-tests tool-tests
 
 # For the gate: what to lint and analyse, and with which flags.

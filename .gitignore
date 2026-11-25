@@ -11,6 +11,8 @@
 # Keys and local settings never belong here.
 *.pem
 *.key
+# The one exception: the public half of the release key, which images trust.
+!/image/release-public.pem
 .env
 .env.*
 

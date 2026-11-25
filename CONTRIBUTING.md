@@ -34,6 +34,10 @@ ready for review when every stage passes.
 rules the design keeps. Please read "Rules this code keeps" before changing
 the orchestrator.
 
+Every pull request runs the same gate on GitHub, then builds the releases
+and images and tests them ([docs/releasing.md](docs/releasing.md)). A pull
+request cannot publish anything.
+
 ## Style
 
 - C++23. Formatting is decided by `.clang-format`; the gate checks it. The
