@@ -12,14 +12,19 @@
 #
 # node-release.conf holds KEY=VALUE lines:
 #
-#   store=https://...               a release store (docs/releases.md)
+#   source=https://...              where its six files are: fortis-node-ARCH,
+#                                   fortis-node-ARCH.manifest and
+#                                   fortis-node-ARCH.manifest.sig for each
+#                                   architecture (a GitHub release of this
+#                                   repository, written by
+#                                   tools/publish-node-release.sh)
 #   version=1.2.3                   the node release to put in the images
 #   manifest_sha256_x86_64=...      the SHA-256 of each architecture's manifest;
 #   manifest_sha256_aarch64=...     a manifest names the program's own hash
 #
 # Three things must hold for each architecture, or nothing is kept: the
 # manifest is the pinned one, it is signed by the key, and the program is the
-# one the manifest names. The store itself is not trusted.
+# one the manifest names. The place it is downloaded from is not trusted.
 set -eu
 image_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 conf=$image_dir/node-release.conf
@@ -30,9 +35,9 @@ output=${1:-$image_dir/../dist/node-release}
 
 setting() { sed -n "s/^$1=//p" "$conf" | head -n 1; }
 digest() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1; else shasum -a 256 "$1" | cut -d ' ' -f 1; fi; }
-store=$(setting store)
+store=$(setting source)
 version=$(setting version)
-case "$store" in https://*) ;; file:///*) [ "${FORTIS_ALLOW_LOCAL_STORE:-}" = 1 ] || { echo 'The store must be an https address.' >&2; exit 2; } ;; *) echo 'The store must be an https address.' >&2; exit 2 ;; esac
+case "$store" in https://*) ;; file:///*) [ "${FORTIS_ALLOW_LOCAL_STORE:-}" = 1 ] || { echo 'The source must be an https address.' >&2; exit 2; } ;; *) echo 'The source must be an https address.' >&2; exit 2 ;; esac
 case "$version" in ''|*[!a-zA-Z0-9._-]*|.|..) echo 'node-release.conf names no valid version.' >&2; exit 2 ;; esac
 
 work=$(mktemp -d)
@@ -41,13 +46,14 @@ for architecture in x86_64 aarch64; do
   pinned=$(setting "manifest_sha256_$architecture")
   case "$pinned" in ''|*[!0-9a-f]*) echo "node-release.conf pins no manifest for $architecture." >&2; exit 2 ;; esac
   mkdir "$work/$architecture"
-  for file in manifest manifest.sig fortis-node; do
+  for file in fortis-node manifest manifest.sig; do
+    case "$file" in fortis-node) name=fortis-node-$architecture ;; *) name=fortis-node-$architecture.$file ;; esac
     curl --fail --silent --show-error --location --retry 3 --proto '=https,file' \
-      --output "$work/$architecture/$file" "$store/$architecture/releases/$version/$file"
+      --output "$work/$architecture/$file" "$store/$name"
   done
   manifest=$work/$architecture/manifest
   [ "$(digest "$manifest")" = "$pinned" ] ||
-    { echo "The $architecture manifest in the store is not the pinned one." >&2; exit 1; }
+    { echo "The downloaded $architecture manifest is not the pinned one." >&2; exit 1; }
   openssl dgst -sha256 -verify "$key" -signature "$manifest.sig" "$manifest" >/dev/null ||
     { echo "The $architecture manifest is not signed by the release key." >&2; exit 1; }
   described="$(sed -n 's/^version=//p' "$manifest") $(sed -n 's/^architecture=//p' "$manifest")"

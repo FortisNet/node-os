@@ -81,27 +81,52 @@ changing either is a reviewed change:
 | File | What it is |
 | --- | --- |
 | `image/release-public.pem` | The public half of the release key. A host made from an image trusts this key, and no other, for its whole life |
-| `image/node-release.conf` | The release store's address, the version, and the SHA-256 of each architecture's manifest |
+| `image/node-release.conf` | Where the node release is, its version, and the SHA-256 of each architecture's manifest |
 
-[image/fetch-node-release.sh](../image/fetch-node-release.sh) downloads the
-release and keeps it only when the manifest is the pinned one, is signed by
-the key, and names the program that was downloaded.
+The node release itself is published as a release of this repository named
+`node-VERSION`, holding the program, its manifest and the manifest's
+signature for each architecture.
+[image/fetch-node-release.sh](../image/fetch-node-release.sh) downloads them
+and keeps them only when each manifest is the pinned one, is signed by the
+key, and names the program that was downloaded.
 
 **Until both files exist, the pipeline builds and publishes the orchestrator
 only**, and says so in the release notes.
 
 The private half of the release key is never given to GitHub. Node releases
-are signed on a separate, trusted computer and uploaded to the store already
-signed; this pipeline only checks signatures.
+are signed on a separate, trusted computer and uploaded already signed; this
+pipeline only checks signatures.
 
-To put a new node release into the images:
+### Creating the release key, once
 
-1. Build and sign it for both architectures, and publish it to the store
-   with [tools/publish_release.py](../tools/publish_release.py).
-2. Set `version` and the two `manifest_sha256_...` values in
-   `image/node-release.conf` (`sha256sum manifest` for each architecture).
-3. Open a pull request. The pipeline fetches, verifies, builds and tests
-   with it.
+On a trusted computer, outside any repository:
+
+```sh
+mkdir -p ~/fortis-release-key && chmod 700 ~/fortis-release-key
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ~/fortis-release-key/release-private.pem
+chmod 600 ~/fortis-release-key/release-private.pem
+openssl pkey -in ~/fortis-release-key/release-private.pem -pubout -out image/release-public.pem
+```
+
+Commit `image/release-public.pem`. Guard the private file: whoever holds it
+can make every host accept a node release. Keep a copy offline, and prefer a
+hardware token for the working copy. A host trusts the key in its image for
+its whole life, so losing or replacing the key means new images.
+
+### Putting a node release into the images
+
+1. Build the node release for both architectures in the node's repository
+   and sign each with the private key (`sign-native-release.sh`).
+2. Publish it and pin it:
+
+   ```sh
+   ./tools/publish-node-release.sh PATH/TO/native-releases/VERSION
+   ```
+
+   This checks both signatures against `image/release-public.pem`, creates
+   the release `node-VERSION` and writes `image/node-release.conf`.
+3. Commit `image/node-release.conf` and open a pull request. The pipeline
+   fetches, verifies, builds the images and tests them with it.
 
 ## Making a release
 
