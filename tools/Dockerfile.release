@@ -1,0 +1,5 @@
+# Toolchain for this repository's release build: musl and GCC, for static programs.
+# Build tools only; nothing from this image is deployed.
+FROM alpine@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35
+RUN apk add --no-cache build-base linux-headers python3 perl perl-utils binutils openssl
+WORKDIR /work

@@ -1,0 +1,13 @@
+# Packages taken out of the Alpine base image. One name per line; "+name"
+# keeps a package on the wanted list in its own right.
+openssh                 # group package: server, client and file transfer helper together
++openssh-server         # the server stays, wanted in its own right
+openssh-client-default  # the host never connects out by SSH
+openssh-client-common
+libedit                 # line editing for the SSH client only
+openssh-sftp-server     # sshd uses its built-in file transfer server
+tzdata                  # the host runs in UTC
+sgdisk                  # tiny-cloud grows the disk with sfdisk and partx
+popt                    # only sgdisk used it
+libstdc++               # only sgdisk used it
+libgcc                  # only sgdisk used it

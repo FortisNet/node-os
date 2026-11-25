@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "example-job",
+  "image": "approved-v1",
+  "args": ["/bin/application"],
+  "cpuLimitMillicores": 1000,
+  "memoryLimitMiB": 256,
+  "maxProcesses": 64,
+  "timeoutSeconds": 60,
+  "scratchLimitMiB": 64,
+  "outputLimitBytes": 1048576
+}

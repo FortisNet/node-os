@@ -1,0 +1,28 @@
+# Test/package builders only; none is a production image. The build context
+# is sandbox; VERIFY_IMAGE is this repository's own toolchain image, which
+# test-linux-sandboxes.sh builds and names.
+ARG VERIFY_IMAGE
+FROM ${VERIFY_IMAGE} AS packager
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates elfutils \
+    && rm -rf /var/lib/apt/lists/*
+COPY package_gvisor.py /opt/fortis-build/package_gvisor.py
+COPY gvisor_runtime.json /opt/fortis-build/gvisor_runtime.json
+COPY third_party/gvisor-runtime /opt/fortis-build/third_party/gvisor-runtime
+RUN set -eu; arch=$(uname -m); \
+    curl --fail --location --proto '=https' --tlsv1.2 \
+      "https://storage.googleapis.com/gvisor/releases/release/20261116.0/$arch/gvisor.tar.bz2" -o /tmp/gvisor.tar.bz2; \
+    mkdir /out; \
+    python3 /opt/fortis-build/package_gvisor.py --archive /tmp/gvisor.tar.bz2 --architecture "$arch" --profile full --output /out/full; \
+    python3 /opt/fortis-build/package_gvisor.py --archive /tmp/gvisor.tar.bz2 --architecture "$arch" --output /out/reduced; \
+    rm /tmp/gvisor.tar.bz2
+FROM ${VERIFY_IMAGE} AS test-base
+RUN apt-get update && apt-get install -y --no-install-recommends crun busybox-static elfutils \
+    && rm -rf /var/lib/apt/lists/*
+COPY tests/sandbox_payload.c /tmp/sandbox_payload.c
+RUN gcc-13 -O2 -static -Wall -Wextra -Werror /tmp/sandbox_payload.c -o /sandbox-payload \
+    && rm /tmp/sandbox_payload.c
+WORKDIR /work
+FROM test-base AS full
+COPY --from=packager /out/full/ /usr/local/bin/
+FROM test-base AS reduced
+COPY --from=packager /out/reduced/ /usr/local/bin/

@@ -1,0 +1,24 @@
+# Build, gate and release output.
+/build/
+/build-*/
+/dist/
+*.o
+*.d
+
+# The pinned Mbed TLS archive, downloaded by tools/fetch-mbedtls.sh.
+/.deps/
+
+# Keys and local settings never belong here.
+*.pem
+*.key
+.env
+.env.*
+
+# Python, editors and operating systems.
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Install root-owned 0755 as /etc/init.d/fortis-sandbox after host provisioning.
+name="FortisNet sandbox supervisor"
+command="/opt/fortis-sandboxes/fortis-sandbox"
+command_args="/etc/fortis-sandbox.json supervise"
+supervisor="supervise-daemon"
+respawn_delay=2
+respawn_max=5
+respawn_period=60
+umask=0077
+pidfile="/run/fortis-sandbox.pid"
+output_log="/var/log/fortis-sandbox.log"
+error_log="/var/log/fortis-sandbox.log"
+retry="TERM/120/KILL/5"
+
+depend() {
+    need localmount
+    after cgroups
+}
+
+start_pre() {
+    umask 077
+    # cgroup directories are ephemeral; init preserves persistent job history.
+    "$command" /etc/fortis-sandbox.json init
+    "$command" /etc/fortis-sandbox.json doctor
+}

@@ -1,0 +1,27 @@
+#!/usr/sbin/nft -f
+# FortisNet host firewall. Installed as /etc/nftables.nft.
+#
+# From outside, only SSH (22), HTTP (80) and HTTPS (443) are reachable. The
+# node's health port and everything else stay on the machine. Anything the
+# host starts itself (updates, certificates, time, DNS) is allowed out, and
+# the answers are allowed back in.
+flush ruleset
+
+table inet fortis {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+    meta l4proto { icmp, ipv6-icmp } accept
+    tcp dport { 22, 80, 443 } accept
+    # An address lease arrives as a broadcast no connection is tracked for.
+    udp sport 67 udp dport 68 accept
+  }
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+  }
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+}

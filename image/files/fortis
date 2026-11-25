@@ -1,0 +1,4 @@
+#!/bin/sh
+# The operator's command on a host: `doas fortis status`, `doas fortis releases`,
+# `doas fortis fetch VERSION`, `doas fortis update VERSION`, `doas fortis backup`.
+exec /usr/libexec/fortis/manage-native-node.sh /etc/fortis/orchestrator.conf "$@"

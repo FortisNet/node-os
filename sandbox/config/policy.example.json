@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "stateRoot": "/var/lib/fortis-sandboxes",
+  "imageRoot": "/opt/fortis-sandboxes/images",
+  "runtime": "/usr/local/bin/runsc",
+  "runtimeSha256": "REPLACE_WITH_VERIFIED_RUNTIME_SHA256",
+  "isolation": "gvisor",
+  "cgroupParent": "/fortis-sandboxes",
+  "uidBase": 1048576,
+  "maxJobs": 8,
+  "cpuBudgetMillicores": 4000,
+  "memoryBudgetMiB": 4096,
+  "maxProcesses": 256,
+  "maxTimeoutSeconds": 3600,
+  "maxScratchMiB": 512,
+  "maxOutputBytes": 1048576
+}

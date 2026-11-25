@@ -1,0 +1,8 @@
+**
+!package_gvisor.py
+!gvisor_runtime.json
+!third_party/
+!third_party/gvisor-runtime/
+!third_party/gvisor-runtime/**
+!tests/
+!tests/sandbox_payload.c

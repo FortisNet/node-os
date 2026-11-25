@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "release": "20261116.0",
+  "sourceCommit": "89cacadae21eca4270a8f7c79281d0426d33ac5f",
+  "archiveSha512": {
+    "aarch64": "a64ce2d5ba6825a0a6459ee6a9ce40164749c2d276a945b885673988c4e545e66b2f4ef3a08e068a26cca676061c8c5e8ba982156feb786f0eab995f5b8b854d",
+    "x86_64": "c87d792d5842efb70c38ee822124cfe0821a547715e7abcf3f2b14997cd02784edaa0b91e238ec5c27a25a1b9e00bf98113398eb62a0778d8d20d4e222f8b0e0"
+  },
+  "required": [
+    "runsc",
+    "gvisor-bin/gvisor_sentry",
+    "gvisor-bin/gvisor-sentry-prewarmer",
+    "gvisor-bin/runsc-fd-parking",
+    "gvisor-bin/gvisor-proc-umounter"
+  ],
+  "omitted": {
+    "containerd-shim-runsc-v1": "The C++ manager invokes OCI runsc directly; containerd is not used.",
+    "gvisor-bin/checkpointgofer": "No checkpoint, restore or filesystem snapshot commands are exposed.",
+    "gvisor-bin/runsc-metric-server": "The separate metric-server command is not used; telemetry reads outer cgroups.",
+    "gvisor-bin/runsc-netgofer": "Network is none and the experimental netgofer proxy is explicitly off."
+  }
+}

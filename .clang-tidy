@@ -1,0 +1,72 @@
+# A conservative check set (Task 15): defects first, a few uncontroversial
+# modernize/readability checks, no naming or formatting rules (Task 25 adds
+# readability-identifier-naming). `make lint` runs it on the files changed
+# against a base ref, `make lint-all` on all of src/ and tests/.
+#
+# Left out on purpose:
+#   bugprone-easily-swappable-parameters, bugprone-narrowing-conversions,
+#   bugprone-implicit-widening-of-multiplication-result, bugprone-branch-clone
+#       - style-level noise in parser and wire-format code;
+#   bugprone-switch-missing-default-case
+#       - the code relies on exhaustive switches with -Wswitch instead;
+#   bugprone-unchecked-optional-access
+#       - slow dataflow check; std::optional is barely used;
+#   bugprone-reserved-identifier, cert-dcl37-c, cert-dcl51-cpp
+#       - the guest shims must define reserved names;
+#   clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+#       - flags every memcpy/snprintf (wants the C11 Annex K _s functions);
+#   performance-enum-size
+#       - enum layouts are part of the wire and on-disk formats;
+#   clang-analyzer-optin.performance.Padding
+#       - field order is part of aggregate initialization and storage contracts;
+#         speculative layout changes belong in a measured performance change.
+#   modernize-deprecated-headers
+#       - the code uses the C headers (<string.h>) throughout by convention.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-branch-clone,
+  -bugprone-switch-missing-default-case,
+  -bugprone-unchecked-optional-access,
+  -bugprone-reserved-identifier,
+  cert-dcl58-cpp,
+  cert-env33-c,
+  cert-err34-c,
+  cert-err52-cpp,
+  cert-err60-cpp,
+  cert-flp30-c,
+  cert-mem57-cpp,
+  cert-msc50-cpp,
+  cert-msc51-cpp,
+  cert-oop57-cpp,
+  cert-oop58-cpp,
+  cert-str34-c,
+  clang-analyzer-*,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  performance-*,
+  -performance-enum-size,
+  modernize-make-unique,
+  modernize-redundant-void-arg,
+  modernize-use-bool-literals,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-nullptr,
+  modernize-use-override,
+  readability-const-return-type,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-duplicate-include,
+  readability-inconsistent-declaration-parameter-name,
+  readability-misleading-indentation,
+  readability-misplaced-array-index,
+  readability-redundant-control-flow,
+  readability-redundant-smartptr-get,
+  readability-string-compare
+WarningsAsErrors: '*'
+# Project headers only: not Mbed TLS, nanopb, blst or the generated protobuf.
+HeaderFilterRegex: '(^|/)(src|tests|host)/[^.].*\.h$'
+FormatStyle: file

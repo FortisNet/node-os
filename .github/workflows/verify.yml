@@ -1,0 +1,56 @@
+name: Verify
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    name: Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build, test and analyse everything
+        run: make verify
+      - name: Keep the report and logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: verify-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build-verify/report.json
+            build-verify/logs/
+          retention-days: 14
+  release-build:
+    name: Release build (${{ matrix.architecture }})
+    needs: [verify]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-latest
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      # A release is built only from files with a passing report, so the gate
+      # runs again on this runner before the hardened build.
+      - name: Gate
+        run: make verify
+      - name: Hardened static release
+        run: ./build-release.sh "ci-${{ github.sha }}" "${{ matrix.architecture }}"
+      - name: Keep the release and its hardening report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-${{ matrix.architecture }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/ci-${{ github.sha }}/${{ matrix.architecture }}/
+          retention-days: 14

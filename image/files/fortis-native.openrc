@@ -1,0 +1,43 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh
+# Installed as /etc/init.d/fortis-native. It lays a new host out once, then
+# runs the orchestrator's supervisor for as long as the host is up.
+export description="FortisNet orchestrator: installs, runs, updates and recovers the node"
+export supervisor="supervise-daemon"
+export command="/usr/libexec/fortis/run-native-service.sh"
+export command_args="/etc/fortis/orchestrator.conf"
+export output_log="/var/log/fortis-orchestrator.log"
+export error_log="/var/log/fortis-orchestrator.log"
+export respawn_delay=5
+export respawn_max=3
+export respawn_period=3600
+export stopsig=TERM
+export retry="TERM/210/KILL/5"
+depend() {
+  # No container daemon: the controller's keeper runs the node through crun,
+  # which needs the control group filesystem.
+  need net localmount cgroups
+  # The optional broker creates its protected runtime directory before mounting.
+  # The first-boot tool, the clock and the firewall come first when present.
+  after fortis-sandbox-broker tiny-cloud-final chronyd nftables
+}
+start_pre() {
+  # Settings given when the machine was created: user data whose first line
+  # is "#fortis-settings", then KEY=VALUE lines. Used once, on a new host.
+  if [ ! -e /etc/fortis/orchestrator.conf ] && [ ! -e /etc/fortis/first-boot.conf ] &&
+    [ "$(head -n 1 /var/lib/cloud/user-data 2>/dev/null)" = "#fortis-settings" ]; then
+    mkdir -p /etc/fortis
+    (umask 077 && tail -n +2 /var/lib/cloud/user-data >/etc/fortis/first-boot.conf)
+  fi
+  # Lay the host out. It needs a network address, which can take a moment
+  # after boot, so try for a minute before giving up.
+  attempts=0
+  until /usr/libexec/fortis/native-controller /etc/fortis/orchestrator.conf first-boot >>/var/log/fortis-orchestrator.log 2>&1; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 30 ]; then
+      eerror "The host could not be configured; see /var/log/fortis-orchestrator.log"
+      return 1
+    fi
+    sleep 2
+  done
+}

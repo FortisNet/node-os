@@ -1,0 +1,8 @@
+# What differs from packages.why in the ARM (aarch64) image. "-name" is a
+# package of the base list that the ARM base does not have; other lines are
+# name, a tab, the reason, as in packages.why.
+-limine-bios
+-limine-bios-updater
+-limine-efi-x86_64
+-limine-tool
+limine-efi-aarch64	Bootloader for UEFI boot. Part of the ARM base; a container does not use it

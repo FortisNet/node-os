@@ -1,0 +1,15 @@
+# Why each package the node host image adds to the base is there (the base
+# is explained in packages.why). Name, a tab, the reason. build-image.sh
+# fails when an added package is missing here.
+
+# Running the node
+crun	Starts the node, the page server and the certificate and download helpers, each in its own container. There is no container daemon
+
+# Firewall
+nftables	The firewall: from outside, only ports 22, 80 and 443 are reachable
+nftables-openrc	Loads the firewall rules at boot
+libnftnl	Required by nftables
+libmnl	Required by nftables
+jansson	Required by nftables
+gmp	Required by nftables
+readline	Required by nftables

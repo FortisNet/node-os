@@ -1,0 +1,17 @@
+FortisNet Node OS
+Copyright 2026 FortisNet contributors.
+
+This product is licensed under the Apache License, Version 2.0 (LICENSE).
+
+It includes or is built with software from other projects. Their license
+and copyright notices apply to those parts:
+
+- lib/ holds source files copied from the FortisNet node (Apache-2.0);
+  lib/ORIGIN.json records each origin.
+- Mbed TLS (Apache-2.0) is built from a pinned source archive that
+  tools/fetch-mbedtls.sh downloads; its license is copied into every release.
+- Releases are static programs that contain parts of musl and of the GCC
+  runtime libraries: third_party/native-runtime/.
+- The sandbox manager packages gVisor: sandbox/third_party/gvisor-runtime/.
+- The images are built from Alpine Linux and its packages, each under its
+  own license; image/README.md lists them.

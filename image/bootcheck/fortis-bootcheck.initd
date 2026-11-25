@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# Test image only: report what first boot achieved on a DigitalOcean Droplet.
+description="FortisNet first-boot report for the bare tiny-cloud test image"
+
+depend() {
+    # The node's real service needs the control group filesystem for crun;
+    # needing it here proves OpenRC provides it without enabling it by hand.
+    need localmount cgroups
+    after tiny-cloud-final networking sshd chronyd
+}
+
+start() {
+    ebegin "Writing the FortisNet first-boot report"
+    /usr/local/bin/fortis-bootcheck
+    eend 0
+}

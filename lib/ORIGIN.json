@@ -1,0 +1,62 @@
+{
+  "bounded_json.cpp": {
+    "from": "node/src/codec/bounded_json.cpp",
+    "sha256": "81e29a9aa61154ff9923bde8c24fc856be27af118a63ce6b9fbc87ca61abc125"
+  },
+  "bounded_json.h": {
+    "from": "node/src/codec/bounded_json.h",
+    "sha256": "bde320e812258fb4ccfa2011e38a7ae28c627003263cd44f5d3564adea881c2f"
+  },
+  "exception_boundary.h": {
+    "from": "node/src/base/exception_boundary.h",
+    "sha256": "876149809f2e52f4ec648b414a2259a23f5d11a04040a0770d6c773bd3fe4b4e"
+  },
+  "file_descriptor.h": {
+    "from": "node/src/base/file_descriptor.h",
+    "sha256": "b8cca7470abd5afc73a7b7caa1c9b15440e9783961f05d5ad3a9bc3d460f760d"
+  },
+  "json_lex.h": {
+    "from": "node/src/codec/json_lex.h",
+    "sha256": "3c58ff5158f497e6bc1b8218bd3301da7babcd30eaa53c4d9d2177e6004fdc6f"
+  },
+  "log.h": {
+    "from": "node/src/base/log.h",
+    "sha256": "41036f6d1f9a402fde26c4710df0fc64096994584118ad9854a5d374477b90be"
+  },
+  "outbound_https.cpp": {
+    "from": "node/src/http/outbound_https.cpp",
+    "sha256": "8a463fd7690c8fb5aed4b4a1590748930e4911e1533de0c11eb8c42a1de46a6b"
+  },
+  "outbound_https.h": {
+    "from": "node/src/http/outbound_https.h",
+    "sha256": "e52773d5a3367680b42bb477908070249f394b997096825f9be5688b6265f814"
+  },
+  "ownership.h": {
+    "from": "node/src/base/ownership.h",
+    "sha256": "2fff7b1cb25dfdcb3a0130608707c4f7429421aa7df5510ae7e1bb46a9ef3745"
+  },
+  "sandbox_socket.cpp": {
+    "from": "node/src/compat/sandbox_socket.cpp",
+    "sha256": "216a4f0a02cd9e686886d1ee8f932bb6f4831be409e243eb047e30ada50a2f3b"
+  },
+  "sandbox_socket.h": {
+    "from": "node/src/compat/sandbox_socket.h",
+    "sha256": "26623191c190e4d61ebf6632282f4ebae9003088d00f8dcaaab4d321ee92a3a5"
+  },
+  "sandbox_wire.h": {
+    "from": "node/src/codec/sandbox_wire.h",
+    "sha256": "67974a2a9bb3739788025a9f4fb38f2892d6ad3a4c547aa9142759e26959f7d5"
+  },
+  "status.h": {
+    "from": "node/src/base/status.h",
+    "sha256": "0727a00f74055a4790c7558fc7971335474d78c304a8b1b305628bea6cb9c8a4"
+  },
+  "threading.h": {
+    "from": "node/src/base/threading.h",
+    "sha256": "9c3061204dc16c7c058ca10e4c47aefa4caadb60db4339595a8ca7593f54ad9a"
+  },
+  "utf8.h": {
+    "from": "node/src/codec/utf8.h",
+    "sha256": "a50bbc0f3aacca94a046c3ab16f5293f151ce5c4ba3046b350646263ac9a2816"
+  }
+}

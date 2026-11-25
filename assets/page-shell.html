@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05090d">
+<title>@TITLE@</title>@REFRESH@
+<meta name="description" content="@DESCRIPTION@">
+<link rel="icon" href="@FAVICON@" type="image/svg+xml">
+<style>
+:root{color-scheme:dark;--bg:#05090d;--ink:#edf8fb;--muted:#a4bac4;--cyan:#22e1ff;--line:#25404b;font-family:Arial,system-ui,sans-serif;font-size:16px;line-height:1.6;background:var(--bg);color:var(--ink)}
+*{box-sizing:border-box}body{margin:0}a{color:inherit;text-underline-offset:5px}a:hover{color:var(--cyan)}a:focus-visible,summary:focus-visible{outline:2px solid var(--cyan);outline-offset:5px}.skip{position:absolute;left:12px;top:-80px;z-index:10;padding:12px;background:var(--cyan);color:var(--bg)}.skip:focus{top:12px}
+header{min-height:85px;padding:20px 4vw;display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid var(--line);background:#0a151c}.brand{display:flex;gap:18px;align-items:center;text-decoration:none}.brand img{width:178px;height:auto}.brand span{border-left:1px solid var(--line);padding-left:18px;color:var(--muted);font:14px monospace;letter-spacing:.15em}nav{display:flex;gap:25px;align-items:center;font-size:14px}nav a{text-decoration:none}.nav-cta{border:1px solid #456773;padding:9px 15px}
+main{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(0,1fr);max-width:1920px;margin:auto}.portrait{position:sticky;top:0;height:calc(100dvh - 85px);min-height:700px;isolation:isolate;display:flex;flex-direction:column;justify-content:space-between;padding:48px 4vw 40px;border-right:1px solid var(--line);overflow:hidden}.portrait:before{content:"";position:absolute;inset:0;z-index:-2;background:linear-gradient(180deg,#05090d4d 15%,#05090d05 45%,#05090df2 100%),url('@HERO@') 62% center/cover}.portrait:after{content:"";position:absolute;inset:0;z-index:-1;background-image:linear-gradient(#22e1ff0a 1px,transparent 1px),linear-gradient(90deg,#22e1ff0a 1px,transparent 1px);background-size:70px 70px;pointer-events:none}.eyebrow{margin:0 0 18px;color:var(--cyan);font:14px/1.6 monospace;letter-spacing:.13em;text-transform:uppercase}.eyebrow:before{content:"";display:inline-block;width:7px;height:7px;background:var(--cyan);margin-right:12px}h1{font-size:clamp(44px,4.6vw,80px);font-weight:500;line-height:.98;letter-spacing:-.055em;margin:0;text-transform:uppercase}h1 span{color:var(--cyan)}.portrait-foot{margin-top:180px}.portrait-foot p{max-width:330px;color:#c3d6df;font-size:18px;line-height:1.5}.coordinates{padding-top:18px;border-top:1px solid #53829180;display:flex;justify-content:space-between;gap:15px;font:13px/1.6 monospace;letter-spacing:.08em;color:#9cb8c6}
+.content{padding:42px clamp(24px,3.5vw,65px) 30px}.intro h2{font-size:clamp(30px,2.8vw,44px);font-weight:500;line-height:1.14;letter-spacing:-.035em;margin:0 0 20px}.intro p{color:var(--muted);margin:0 0 16px}.intro a{font-size:14px;color:var(--cyan)}section+section{border-top:1px solid var(--line);margin-top:30px;padding-top:24px}.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px}.section-head h2{font-size:20px;font-weight:500;margin:0}.section-head span{font:13px monospace;color:var(--cyan);letter-spacing:.08em}.note{color:var(--muted);font-size:14px;line-height:1.55;margin:10px 0 16px}.check{color:var(--cyan);font-size:18px;line-height:1.4}.off .check{color:#8ca0ab}.state{font:12px/1.7 monospace;color:var(--cyan);padding-top:3px;white-space:nowrap}.off .state{color:#a4bac4}footer{padding:26px 4vw;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;color:var(--muted);font:13px/1.6 monospace}footer a{font-size:14px}
+@media(min-width:1700px){.portrait{min-height:880px}.content{padding-top:60px}}@media(max-width:1000px){nav{gap:16px}.brand span{display:none}.portrait{padding:34px 28px}.content{padding:34px 25px}.state{font-size:11px}}@media(max-width:760px){header{padding:18px 22px;flex-wrap:wrap;gap:18px}.brand img{width:159px}nav{font-size:14px;gap:18px}.nav-cta{padding:6px 10px}nav .external{display:none}main{grid-template-columns:1fr}.portrait{position:relative;height:600px;min-height:0;padding:35px 25px;border-right:0;border-bottom:1px solid var(--line)}h1{font-size:clamp(36px,11vw,76px)}.portrait-foot{margin-top:100px}.portrait-foot p{font-size:17px}.content{padding:34px 25px 35px}.section-head span{font-size:12px}.coordinates{font-size:12px}footer{padding:24px 25px}}@media(max-width:370px){.state{grid-column:2;padding:0}.portrait{height:570px}nav{gap:14px}}
+
+.facts{display:grid;grid-template-columns:auto 1fr;gap:6px 22px;margin:0;font-size:14px}.facts dt{color:var(--muted)}.facts dd{margin:0}
+.checks{padding:0;list-style:none;margin:0}.checks li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px 0;border-top:1px solid #192e38}.checks strong{font-weight:500}.checks p{margin:2px 0 0;color:var(--muted);font-size:14px}.ok .check{color:var(--cyan)}.bad .check{color:#ff8a7a}.bad .state{color:#ff8a7a}.wait .check,.wait .state{color:#e8c26a}
+.banner{padding:16px 20px;border:1px solid var(--line);background:#0c1b23;margin:0 0 26px}.banner strong{display:block;font-size:20px;font-weight:500}.banner span{color:var(--muted);font-size:14px}.banner.bad{border-color:#7a3a33}.banner.wait{border-color:#6f5a26}
+.links{display:flex;gap:20px;flex-wrap:wrap;font-size:14px;margin:0;padding:0;list-style:none}.links .off{color:#6f838d}
+code{font:13px monospace;background:#0c1b23;border:1px solid var(--line);padding:2px 6px}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to the information</a>
+<header><a class="brand" href="/" aria-label="FortisNet node home"><img src="@LOCKUP@" alt="FortisNet" width="178" height="27"><span>NODE OS</span></a><nav aria-label="Primary"><a class="external" href="https://blockchain.fortisnet.io/">The blockchain &#8599;</a><a href="/">Overview</a><a class="nav-cta" href="/health">Health</a></nav></header>
+<main><div class="portrait"><div><p class="eyebrow">@EYEBROW@</p><h1>@HEADLINE@</h1></div><div class="portrait-foot"><p>@TAGLINE@</p><div class="coordinates"><span>FORTISNET NODE</span><span>@STAMP@</span></div></div></div>
+<div class="content" id="content">
+@CONTENT@
+</div></main>
+<footer><span>FORTISNET NODE OS / OPEN SOURCE</span><span><a href="https://github.com/FortisNet/node-os">Source code &#8599;</a> &nbsp; <a href="https://blockchain.fortisnet.io/">Learn about FortisNet &#8599;</a></span></footer>
+</body></html>

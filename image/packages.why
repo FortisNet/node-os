@@ -1,0 +1,92 @@
+# Why each package is in the image. Name, a tab, the reason.
+# The image build fails when an installed package is missing here, or when
+# a package listed here is not installed, so this file always matches the
+# image. README.md is generated from it and from the built image's sizes.
+
+# Kernel and boot
+linux-virt	The kernel, built for virtual machines
+limine-bios	Bootloader for BIOS boot
+limine-efi-x86_64	Bootloader for UEFI boot
+limine-tool	Installs the bootloader after a kernel update
+limine-bios-updater	Reinstalls the BIOS bootloader after an update
+limine-efi-updater	Reinstalls the UEFI bootloader after an update
+mkinitfs	Builds the early boot image after a kernel update
+cryptsetup-libs	Required by mkinitfs
+device-mapper-libs	Required by mkinitfs
+json-c	Required by cryptsetup-libs and the NVMe tools
+kmod	Loads kernel modules
+kmod-libs	Library of kmod
+lddtree	Used by mkinitfs to collect libraries
+scanelf	Used by lddtree
+dosfstools	Maintains the UEFI boot partition
+
+# Base system
+alpine-base	Alpine's minimal base set
+alpine-baselayout	Directory layout and base configuration
+alpine-baselayout-data	Base configuration files
+alpine-conf	Alpine's system setup scripts, used at first boot
+alpine-release	Version file
+musl	The C library
+musl-utils	C library tools
+busybox	The shell and the standard commands
+busybox-binsh	Makes the busybox shell /bin/sh
+busybox-suid	The few busybox commands that need elevated rights
+busybox-openrc	Service files for busybox daemons (system log, console)
+busybox-mdev-openrc	Service file for the device manager
+mdev-conf	Device manager rules
+openrc	The service manager; also provides the control group setup crun needs
+openrc-user	Part of the service manager
+libcap2	Required by the service manager and the clock service
+libeconf	Required by util-linux tools
+libncursesw	Required by sfdisk
+ncurses-terminfo-base	Terminal descriptions for the console and SSH sessions
+
+# Package management and trust
+apk-tools	Installs security updates for the host
+libapk	Library of apk-tools
+alpine-keys	Keys that verify Alpine packages
+ca-certificates-bundle	Trust anchors: the certificate authority and the release store are verified against these
+ssl_client	HTTPS for the built-in download command
+zlib	Compression, required by apk-tools and OpenSSH
+xz-libs	Compression, required by kmod
+zstd-libs	Compression, required by kmod
+libcrypto3	Cryptography library, required by OpenSSH and apk-tools
+libssl3	TLS library, required by apk-tools and the built-in download command
+
+# Remote access
+openssh-server	The SSH server: how the operator reaches the host
+openssh-server-common	SSH server configuration
+openssh-server-common-openrc	SSH service file
+openssh-keygen	Creates the host's SSH keys at first boot
+doas	Lets the operator's account act as administrator
+
+# Network and time
+dhcpcd	Gets the network address
+dhcpcd-openrc	Its service file
+ifupdown-ng	Brings network interfaces up
+bridge	Part of the network setup scripts
+chrony	Keeps the clock right; certificates and signatures need it
+chrony-common	Clock service files
+chrony-openrc	Clock service file
+
+# Disk and first boot
+tiny-cloud	First boot: network, SSH key, host name, disk growth
+tiny-cloud-openrc	Its service files
+yx	Reads settings for tiny-cloud
+yaml	Required by yx
+e2fsprogs	Filesystem check at boot
+e2fsprogs-extra	Grows the filesystem to the disk at first boot
+e2fsprogs-libs	Library of e2fsprogs
+libcom_err	Required by e2fsprogs
+sfdisk	Grows the partition at first boot
+partx	Tells the kernel about the grown partition
+libfdisk	Required by sfdisk
+libsmartcols	Required by sfdisk
+libblkid	Identifies disks and partitions
+libuuid	Required by the disk tools
+nvme-cli	NVMe disk tools: AWS and other clouds present disks as NVMe
+libnvme	Required by nvme-cli
+libnvmemi	Required by nvme-cli
+mount	Mounts filesystems
+libmount	Library of mount
+libseccomp	System call filtering: required by the clock service, and by crun for the node's filter

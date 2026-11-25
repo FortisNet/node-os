@@ -1,0 +1,36 @@
+# Derived from the existing sources (Task 15); the tree has NOT been
+# reformatted with it yet (Task 25 does that in one formatting-only commit).
+# `make format-diffstat` reports how many lines it would change.
+#
+# What the code already does, measured over src/ and tests/ (208K lines):
+#   - 2-space indent (no tabs), braces attached (15.4K attached vs 0.3K on
+#     their own line), namespaces not indented, access specifiers at +1;
+#   - `T* x` / `T& x` (16.9K + 5.0K) against `T *x` / `T &x` (0.2K);
+#   - 99.65% of lines are under 120 columns; the older modules wrap near 80
+#     and the newer ones near 120, so 120 is the limit both satisfy;
+#   - short `if (...) return x;` and short loops stay on one line (7.1K
+#     one-line ifs against 0.8K broken ones), `else` chains included;
+#   - includes are grouped (own header, then <system>, then "project") but
+#     not sorted inside a group, and some orders matter (the Mbed TLS user
+#     config, the Unikraft shims), so includes are left alone.
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++17
+ColumnLimit: 120
+IndentWidth: 2
+UseTab: Never
+AccessModifierOffset: -1
+NamespaceIndentation: None
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+IndentCaseLabels: true
+SortIncludes: Never
+IncludeBlocks: Preserve
+SortUsingDeclarations: Never

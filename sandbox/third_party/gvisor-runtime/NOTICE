@@ -1,0 +1,13 @@
+gVisor release 20261116.0
+Copyright The gVisor Authors and contributors.
+Source revision: 89cacadae21eca4270a8f7c79281d0426d33ac5f
+Source: https://github.com/google/gvisor/tree/89cacadae21eca4270a8f7c79281d0426d33ac5f
+
+The FortisNet package selects upstream executables for its restricted OCI
+profile. Only debug information and ELF section-table metadata are removed;
+program headers, allocated runtime sections and other mapped bytes are verified
+unchanged. Upstream source and archive identities remain in the package manifest.
+
+LICENSE is the upstream Apache-2.0 license. GO-BSD-LICENSE preserves the
+Go Authors BSD notice used in gVisor's safecopy, sync and sentry/time packages.
+Retain the upstream notices and dependency notices applicable to redistribution.
