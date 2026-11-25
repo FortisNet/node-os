@@ -93,40 +93,64 @@ key, and names the program that was downloaded.
 **Until both files exist, the pipeline builds and publishes the orchestrator
 only**, and says so in the release notes.
 
-The private half of the release key is never given to GitHub. Node releases
-are signed on a separate, trusted computer and uploaded already signed; this
-pipeline only checks signatures.
+### Who signs, and where the key is
 
-### Creating the release key, once
+Node releases are signed by GitHub Actions, in the workflow
+[sign-node-release.yml](../.github/workflows/sign-node-release.yml). The
+private half of the release key is the secret `RELEASE_SIGNING_KEY` of the
+environment `release-signing`, and that environment requires a reviewer's
+approval before any job may use it.
+
+| Protection | What it does |
+| --- | --- |
+| Approval for every signing | A person sees what is about to be signed (version, program hashes, source commit) and presses Approve. Nothing is signed without that |
+| A job that only signs | The job holding the key signs two small text files that an earlier job already checked. It runs no code from the release or the repository |
+| The key must match | Signing refuses a key that is not the one of `image/release-public.pem` |
+| Never signed twice | Only a draft can be signed. A published node release is never changed |
+| A second key, offline | The orchestrator also accepts a recovery key (`FORTIS_NATIVE_RECOVERY_KEY`). Keeping one offline is the way back if this key is ever exposed |
+
+Set the environment's **deployment branches** to `main` only, so the key
+cannot be reached from another branch. A host trusts the key in its image
+for its whole life: replacing the key means new images.
+
+### Setting the key up, once
 
 On a trusted computer, outside any repository:
 
 ```sh
-mkdir -p ~/fortis-release-key && chmod 700 ~/fortis-release-key
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ~/fortis-release-key/release-private.pem
-chmod 600 ~/fortis-release-key/release-private.pem
-openssl pkey -in ~/fortis-release-key/release-private.pem -pubout -out image/release-public.pem
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out release-private.pem
+openssl pkey -in release-private.pem -pubout -out release-public.pem
+gh secret set RELEASE_SIGNING_KEY --env release-signing --repo FortisNet/node-os < release-private.pem
 ```
 
-Commit `image/release-public.pem`. Guard the private file: whoever holds it
-can make every host accept a node release. Keep a copy offline, and prefer a
-hardware token for the working copy. A host trusts the key in its image for
-its whole life, so losing or replacing the key means new images.
+Create the environment `release-signing` first (Settings, Environments),
+with required reviewers. Commit `release-public.pem` as
+`image/release-public.pem`. Then move `release-private.pem` to offline
+storage and remove it from the computer.
 
 ### Putting a node release into the images
 
-1. Build the node release for both architectures in the node's repository
-   and sign each with the private key (`sign-native-release.sh`).
-2. Publish it and pin it:
+```mermaid
+flowchart LR
+    B["Node release is built<br/>(x86-64 and ARM64)"] --> S["submit-node-release.sh<br/>uploads it as a draft"]
+    S --> C["Check<br/>hashes, architecture, size"]
+    C --> A{"Reviewer approves"}
+    A --> G["Sign and publish<br/>release node-VERSION"]
+    G --> P["Pull request<br/>pins it in node-release.conf"]
+    P --> M["Merge: images are built,<br/>tested and published"]
+```
+
+1. Build the node release for both architectures in the node's repository.
+2. Hand it over:
 
    ```sh
-   ./tools/publish-node-release.sh PATH/TO/native-releases/VERSION
+   ./tools/submit-node-release.sh PATH/TO/native-releases/VERSION
    ```
 
-   This checks both signatures against `image/release-public.pem`, creates
-   the release `node-VERSION` and writes `image/node-release.conf`.
-3. Commit `image/node-release.conf` and open a pull request. The pipeline
-   fetches, verifies, builds the images and tests them with it.
+3. Open the run of **Sign node release** on the Actions page, read the
+   summary, and approve.
+4. Merge the pull request it opens. The build that follows puts this node
+   release into the three images and publishes them.
 
 ## Making a release
 

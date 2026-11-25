@@ -16,8 +16,8 @@
 #                                   fortis-node-ARCH.manifest and
 #                                   fortis-node-ARCH.manifest.sig for each
 #                                   architecture (a GitHub release of this
-#                                   repository, written by
-#                                   tools/publish-node-release.sh)
+#                                   repository, made by the "Sign node
+#                                   release" workflow)
 #   version=1.2.3                   the node release to put in the images
 #   manifest_sha256_x86_64=...      the SHA-256 of each architecture's manifest;
 #   manifest_sha256_aarch64=...     a manifest names the program's own hash

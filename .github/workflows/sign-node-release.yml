@@ -1,0 +1,168 @@
+# Sign a node release with the release key, publish it and pin it for the images.
+#
+# Started by tools/submit-node-release.sh, which uploads an unsigned node
+# release as the draft release "node-VERSION" and then runs this workflow.
+#
+#   check   no secrets: is the draft what its manifests say it is?
+#   sign    waits for a reviewer's approval (environment "release-signing"),
+#           then signs the two manifests and publishes the release
+#   pin     proposes image/node-release.conf as a pull request; merging it
+#           builds the images with this node release
+#
+# The job that holds the key signs two small text files it has already
+# checked, and runs no code from the release or from the repository.
+name: Sign node release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The node release version (the draft release is node-VERSION)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: sign-node-release-${{ inputs.version }}
+  cancel-in-progress: false
+env:
+  VERSION: ${{ inputs.version }}
+  GH_TOKEN: ${{ github.token }}
+  REPOSITORY: ${{ github.repository }}
+jobs:
+  check:
+    name: Check the draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # a draft release can only be read with write access
+    outputs:
+      manifest_x86_64: ${{ steps.check.outputs.manifest_x86_64 }}
+      manifest_aarch64: ${{ steps.check.outputs.manifest_aarch64 }}
+    steps:
+      - name: Download and check the unsigned release
+        id: check
+        run: |
+          case "$VERSION" in ''|*[!a-zA-Z0-9._-]*|.|..) echo 'Invalid version' >&2; exit 2 ;; esac
+          [ "$(gh release view "node-$VERSION" --repo "$REPOSITORY" --json isDraft --jq .isDraft)" = true ] ||
+            { echo "node-$VERSION is not a draft: a published node release is never signed again." >&2; exit 1; }
+          mkdir draft
+          gh release download "node-$VERSION" --repo "$REPOSITORY" --dir draft
+          field() { sed -n "s/^$1=//p" "$2"; }
+          {
+            echo "## Node release \`$VERSION\`, waiting to be signed"
+            echo
+            echo "| Architecture | Program SHA-256 | Bytes | Source commit | Manifest SHA-256 |"
+            echo "| --- | --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for architecture in x86_64 aarch64; do
+            program=draft/fortis-node-$architecture
+            manifest=$program.manifest
+            [ -f "$program" ] && [ -f "$manifest" ] || { echo "The draft lacks the $architecture files." >&2; exit 1; }
+            [ ! -e "$manifest.sig" ] || { echo 'The draft already holds a signature.' >&2; exit 1; }
+            [ "$(wc -c < "$manifest")" -le 1024 ] || { echo 'Manifest too large.' >&2; exit 1; }
+            described="$(field version "$manifest") $(field architecture "$manifest") $(field runtime "$manifest")"
+            [ "$described" = "$VERSION $architecture linux-musl-static-v1" ] ||
+              { echo "The $architecture manifest describes something else: $described" >&2; exit 1; }
+            [ "$(sha256sum "$program" | cut -d ' ' -f 1)" = "$(field sha256 "$manifest")" ] ||
+              { echo "The $architecture program is not the one its manifest names." >&2; exit 1; }
+            [ "$(wc -c < "$program" | tr -d ' ')" = "$(field bytes "$manifest")" ] ||
+              { echo "The $architecture program has another size than its manifest says." >&2; exit 1; }
+            case "$architecture" in x86_64) machine='Advanced Micro Devices X86-64' ;; aarch64) machine=AArch64 ;; esac
+            readelf -h "$program" | grep -q "Machine: *$machine" ||
+              { echo "The $architecture program is built for another processor." >&2; exit 1; }
+            ! readelf -l "$program" | grep -q INTERP || { echo 'The program needs an interpreter.' >&2; exit 1; }
+            digest=$(sha256sum "$manifest" | cut -d ' ' -f 1)
+            echo "manifest_$architecture=$digest" >> "$GITHUB_OUTPUT"
+            echo "| $architecture | \`$(field sha256 "$manifest")\` | $(field bytes "$manifest") | \`$(field source_commit "$manifest")\` | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo
+            echo "Approving the next job signs exactly these two manifests with the release key."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sign:
+    name: Sign and publish
+    needs: [check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-signing
+    permissions:
+      contents: write   # add the signatures and publish the release
+    env:
+      MANIFEST_X86_64: ${{ needs.check.outputs.manifest_x86_64 }}
+      MANIFEST_AARCH64: ${{ needs.check.outputs.manifest_aarch64 }}
+    steps:
+      # Only the public key is taken from the repository; nothing from it runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: image/release-public.pem
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Download the two manifests that were checked
+        run: |
+          mkdir sign
+          for architecture in x86_64 aarch64; do
+            gh release download "node-$VERSION" --repo "$REPOSITORY" --dir sign --pattern "fortis-node-$architecture.manifest"
+          done
+          [ "$(sha256sum sign/fortis-node-x86_64.manifest | cut -d ' ' -f 1)" = "$MANIFEST_X86_64" ]
+          [ "$(sha256sum sign/fortis-node-aarch64.manifest | cut -d ' ' -f 1)" = "$MANIFEST_AARCH64" ]
+      - name: Sign
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          [ -n "$RELEASE_SIGNING_KEY" ] || { echo 'The environment has no RELEASE_SIGNING_KEY.' >&2; exit 1; }
+          umask 077
+          key=$(mktemp -p "$RUNNER_TEMP")
+          trap 'shred -u "$key" 2>/dev/null || rm -f "$key"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          # The key must be the one whose public half hosts are built to trust.
+          [ "$(openssl pkey -in "$key" -pubout -outform DER | sha256sum)" = "$(openssl pkey -pubin -in image/release-public.pem -outform DER | sha256sum)" ] ||
+            { echo 'The signing key is not the one of image/release-public.pem.' >&2; exit 1; }
+          for architecture in x86_64 aarch64; do
+            manifest=sign/fortis-node-$architecture.manifest
+            openssl dgst -sha256 -sign "$key" -out "$manifest.sig" "$manifest"
+            openssl dgst -sha256 -verify image/release-public.pem -signature "$manifest.sig" "$manifest"
+          done
+      - name: Add the signatures and publish the release
+        run: |
+          gh release upload "node-$VERSION" --repo "$REPOSITORY" \
+            sign/fortis-node-x86_64.manifest.sig sign/fortis-node-aarch64.manifest.sig
+          gh release edit "node-$VERSION" --repo "$REPOSITORY" --draft=false --latest=false
+
+  pin:
+    name: Propose it for the images
+    needs: [check, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push the branch
+      pull-requests: write   # open the pull request
+    env:
+      MANIFEST_X86_64: ${{ needs.check.outputs.manifest_x86_64 }}
+      MANIFEST_AARCH64: ${{ needs.check.outputs.manifest_aarch64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pin the release and open a pull request
+        run: |
+          branch=node-release/$VERSION
+          {
+            echo "# The node release the images are built with. Written by the"
+            echo "# \"Sign node release\" workflow; see docs/releasing.md."
+            echo "source=https://github.com/$REPOSITORY/releases/download/node-$VERSION"
+            echo "version=$VERSION"
+            echo "manifest_sha256_x86_64=$MANIFEST_X86_64"
+            echo "manifest_sha256_aarch64=$MANIFEST_AARCH64"
+          } > image/node-release.conf
+          # Prove that what was published is what a build will accept.
+          ./image/fetch-node-release.sh "$RUNNER_TEMP/node-release"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$branch"
+          git add image/node-release.conf
+          git commit -m "Build the images with node release $VERSION"
+          git push --force origin "$branch"
+          if ! gh pr create --repo "$REPOSITORY" --base main --head "$branch" \
+            --title "Build the images with node release $VERSION" \
+            --body "Node release \`$VERSION\` was signed and published as [node-$VERSION](https://github.com/$REPOSITORY/releases/tag/node-$VERSION). Merging this builds the disk image and the container images with it and publishes them as **edge**."; then
+            echo "The pull request could not be opened automatically. Open it here: https://github.com/$REPOSITORY/compare/main...$branch?expand=1" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
