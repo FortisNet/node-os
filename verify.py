@@ -6,9 +6,12 @@ repository into it with the network switched off, and runs:
 
   clang      build with Clang and libc++, then every test
   gcc        build with GCC, then every test
+  sanitizers build with AddressSanitizer and UndefinedBehaviorSanitizer, run
+             every test under them, then fuzz the parsers for a minute
   analyzer   the Clang Static Analyzer on every source file
   lint       clang-tidy on every source file, clang-format on all but lib/
   cppcheck   cppcheck on every source file
+  python     pyflakes on every Python file
 
 The result is build-verify/report.json: one return code per stage, the hash
 of every input file, and whether any of them changed while the gate ran. A
@@ -34,9 +37,15 @@ import time
 HERE = Path(__file__).resolve().parent
 OUTPUT = HERE / 'build-verify'
 REPORT = OUTPUT / 'report.json'
-STAGES = ('clang', 'gcc', 'analyzer', 'lint', 'cppcheck')
+STAGES = ('clang', 'gcc', 'sanitizers', 'analyzer', 'lint', 'cppcheck', 'python')
 SKIPPED = {'.git', 'build', 'build-verify', 'build-release', 'dist', '__pycache__', '.DS_Store'}
-COMPILERS = {'clang': ('clang-18', 'clang++-18', ' -stdlib=libc++'), 'gcc': ('gcc-13', 'g++-13', '')}
+COMPILERS = {'clang': ('clang-18', 'clang++-18', ' -stdlib=libc++'), 'gcc': ('gcc-13', 'g++-13', ''),
+             # With the GNU standard library: the fuzzing runtime Ubuntu ships is built for it.
+             'sanitizers': ('clang-18', 'clang++-18', ' -g -fno-omit-frame-pointer'
+                            ' -fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all')}
+# A finding stops the program that has it, so the test that ran it fails.
+SANITIZER_OPTIONS = {'ASAN_OPTIONS': 'abort_on_error=1:detect_leaks=1',
+                     'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1'}
 # The copies in lib/ keep the formatting of the node they came from; everything
 # else follows .clang-format.
 FORMATTED = ('orchestrator', 'sandbox', 'tests')
@@ -104,8 +113,14 @@ def each(names, one, log):
 
 
 def stage(name, log):
+    if name == 'sanitizers':
+        return run(make(name, 'test', 'fuzz'), log, env={**os.environ, **SANITIZER_OPTIONS})
     if name in COMPILERS:
         return run(make(name, 'test'), log)
+    if name == 'python':
+        files = sorted(str(path.relative_to(HERE)) for path in HERE.rglob('*.py')
+                       if not SKIPPED & set(path.relative_to(HERE).parts))
+        return run(['pyflakes3', *files], log)
     # The checkers read the Mbed TLS headers and the generated page shell of
     # the Clang build tree.
     if run(make('clang', 'build-verify/clang/mbedtls-3.6.7/.built', 'build-verify/clang/generated/page_shell.inc'), log):
@@ -149,7 +164,8 @@ def inside(selected):
     report = {'started_at': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
               'complete': False, 'stages': {}, 'input_sha256': before,
               'tool_versions': {tool: subprocess.run([tool, '--version'], capture_output=True, text=True)
-                                .stdout.splitlines()[0] for tool in ('clang-18', 'gcc-13', 'clang-tidy-18', 'cppcheck')}}
+                                .stdout.splitlines()[0]
+                                for tool in ('clang-18', 'gcc-13', 'clang-tidy-18', 'cppcheck', 'pyflakes3')}}
     for name in selected:
         log = logs / f'{name}.log'
         log.unlink(missing_ok=True)

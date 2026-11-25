@@ -1,0 +1,4 @@
+# settings
+version=1.2.3
+architecture=x86_64
+name="quoted value"

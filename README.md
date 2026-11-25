@@ -10,7 +10,11 @@ Encrypt, installs the node and shows a status page. Nobody logs in, and
 nothing is typed.
 
 [![Build](https://github.com/FortisNet/node-os/actions/workflows/build.yml/badge.svg)](https://github.com/FortisNet/node-os/actions/workflows/build.yml)
+[![CodeQL](https://github.com/FortisNet/node-os/actions/workflows/codeql.yml/badge.svg)](https://github.com/FortisNet/node-os/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/FortisNet/node-os/badge)](https://scorecard.dev/viewer/?uri=github.com/FortisNet/node-os)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+![The health page of a running node: every check is healthy](docs/health-page.jpg)
 
 > **Status: early.** The images work end to end and are tested, but there is
 > no numbered release yet, and the node inside runs in development mode.
@@ -43,9 +47,6 @@ images are also at `ghcr.io/fortisnet/node-os`.
 [docs/releasing.md](docs/releasing.md) shows how to check a download. You
 can also [build them yourself](#building).
 
-> Until a signed node release is pinned for the pipeline, the published
-> builds hold the orchestrator only, and images are built locally.
-
 ### On a cloud, from the disk image
 
 1. Upload `fortis-node-os-x86_64-COMMIT.qcow2` as a custom image. On
@@ -71,6 +72,19 @@ Docker picks the image for the server's processor, Intel/AMD or ARM.
 
 The server must be reachable from the internet on ports 80 and 443. Each
 option is explained in [image/README.md](image/README.md#the-container-packaging).
+
+### Where it has been tried
+
+| Where | Image | How |
+| --- | --- | --- |
+| GitHub's x86-64 and ARM64 runners | Both container images | Automatically, on every build: first start to a node answering over HTTPS |
+| A DigitalOcean Droplet with Docker | Container, x86-64 | By hand, with a certificate from Let's Encrypt's staging service |
+| Docker Desktop on an Apple silicon Mac | Container, ARM64 | By hand |
+| QEMU | Disk image | By hand: it boots and configures itself |
+
+The disk image has not yet been started on a real cloud. If you try it on
+one, please [tell us](https://github.com/FortisNet/node-os/issues) how it
+went.
 
 ## What happens on first start
 
@@ -111,6 +125,12 @@ does it.
   agent.
 - **Hardened builds.** Static, position-independent programs; every source
   file's compiler flags are audited before a release is accepted.
+- **Checked before it is published.** Every change is built with two
+  compilers, tested under sanitizers, fuzzed, analysed by four tools and
+  tried end to end on both processor families.
+- **You can check what you download.** Checksums, signed build provenance, a
+  cosign signature and a list of the software inside come with every image,
+  and the images are scanned for known vulnerabilities every week.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
@@ -148,7 +168,7 @@ You need Docker, Python 3 and `make`. Compilers and checkers run in
 containers the build creates.
 
 ```sh
-make verify                    # build, test and analyse everything; about three minutes
+make verify                    # build, test, fuzz and analyse everything; about five minutes
 make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dist/1.2.3/
 ./image/build-image.sh NODE_RELEASE RELEASE_PUBLIC_KEY dist/1.2.3     # the three images, into dist/image/
 ./image/test-container.sh fortis-node-os:COMMIT-aarch64               # try one end to end on this computer
@@ -160,11 +180,14 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 
 ## What is not done yet
 
-- **A signed node release for the images.** Until one is pinned
+- **A public store for node updates.** The images carry a signed node
+  release, but there is no public store yet that running hosts fetch newer
+  ones from.
+- **The node is not built in public.** GitHub signs the node release
   ([docs/releasing.md](docs/releasing.md#the-node-release-inside-the-images)),
-  the pipeline publishes the orchestrator only and the images must be built
-  locally. There is also no public store yet that hosts fetch node updates
-  from.
+  but it is still built on a maintainer's computer.
+- **The disk image on a real cloud.** See
+  [Where it has been tried](#where-it-has-been-tried).
 - **Updating the system itself.** The node is updated by the orchestrator.
   The orchestrator and the Alpine base are not: today that means a new
   image.
@@ -181,7 +204,9 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 
 Changes are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to
 build, what the gate checks and what a change needs before it can be
-merged. Please read the [code of conduct](CODE_OF_CONDUCT.md).
+merged, and [GOVERNANCE.md](GOVERNANCE.md) who decides. Please read the
+[code of conduct](CODE_OF_CONDUCT.md). Changes between releases are in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

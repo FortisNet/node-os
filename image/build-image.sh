@@ -26,6 +26,10 @@
 # from Alpine's ARM disk image. The orchestrator finds out at start whether
 # it runs in a container or on a machine.
 #
+# The exact version of every package is pinned in packages.x86_64.lock and
+# packages.aarch64.lock; a build that would install anything else fails.
+# FORTIS_UPDATE_PACKAGE_LOCK=1 rewrites the two files instead, for review.
+#
 # Unlike the boot check image, these add packages, so the root filesystem is
 # mounted while it is built: the build container runs privileged for that.
 # Nothing from the image is executed.
@@ -33,7 +37,7 @@ set -eu
 
 image_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 if [ "$#" -ne 3 ]; then
-  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 fi
 node_release=$(CDPATH='' cd -- "$1" && pwd)
@@ -114,6 +118,7 @@ docker run --rm --privileged \
   -v "$orchestrator/$architecture:/orchestrator:ro" \
   -e "BASE_NAME=$base_name" -e "OUTPUT_NAME=$output_name" -e "ARCHITECTURE=$architecture" -e "DISK=$2" \
   -e "IMAGE_COMMIT=$commit" -e "IMAGE_MODIFIED=$modified" -e "IMAGE_BUILT=$built" \
+  -e "UPDATE_LOCK=${FORTIS_UPDATE_PACKAGE_LOCK:-0}" \
   -e "ORCHESTRATOR_VERSION=$(field version "$orchestrator/$architecture/controller.manifest")" \
   -e "ORCHESTRATOR_SHA256=$(digest "$orchestrator/$architecture/native-controller")" \
   -e "NODE_VERSION=$(field version "$node_release/$architecture/manifest")" \
@@ -153,6 +158,15 @@ docker run --rm --privileged \
     : > none
     python3 /image/trim_packages.py /mnt/root/lib/apk/db/installed /mnt/root/etc/apk/world none why plan >/dev/null
     cp plan/packages.tsv "/out/$OUTPUT_NAME.packages.tsv"
+    # Every package and its exact version must be the reviewed list, so one
+    # commit always builds the same system (packages.ARCHITECTURE.lock).
+    awk -F: "/^P:/ {name=\$2} /^V:/ {print name \"\t\" \$2}" /mnt/root/lib/apk/db/installed | sort > "/out/$OUTPUT_NAME.packages.lock"
+    if [ "$UPDATE_LOCK" != 1 ] && ! cmp -s "/out/$OUTPUT_NAME.packages.lock" "/image/packages.$ARCHITECTURE.lock"; then
+      echo "The packages are not the ones of image/packages.$ARCHITECTURE.lock (- locked, + found):" >&2
+      diff -U 0 "/image/packages.$ARCHITECTURE.lock" "/out/$OUTPUT_NAME.packages.lock" | grep "^[-+][^-+]" >&2 || true
+      echo "Alpine has probably published an update. Review it, then rebuild with FORTIS_UPDATE_PACKAGE_LOCK=1 and commit the lock files." >&2
+      exit 1
+    fi
     for path in /usr/bin/ssh /usr/bin/sgdisk /usr/share/zoneinfo/UTC; do
       [ ! -e "/mnt/root$path" ] || { echo "$path is still in the image" >&2; exit 1; }
     done
@@ -193,6 +207,11 @@ docker run --rm --privileged \
     qemu-img check "/out/$OUTPUT_NAME.tmp" >/dev/null
     qemu-img info "/out/$OUTPUT_NAME.tmp" | sed -n "1,4p"
   '
+if [ "${FORTIS_UPDATE_PACKAGE_LOCK:-0}" = 1 ]; then
+  cp "$output_dir/$output_name.packages.lock" "$image_dir/packages.$architecture.lock"
+  echo "Updated $image_dir/packages.$architecture.lock"
+fi
+unlink "$output_dir/$output_name.packages.lock"
 if [ "$2" = yes ]; then
   mv "$output_dir/$output_name.tmp" "$output_dir/$output_name"
   (cd "$output_dir" && printf '%s  %s\n' "$(digest "$output_name")" "$output_name" > "$output_name.sha256")

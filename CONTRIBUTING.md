@@ -18,14 +18,18 @@ You need Docker, Python 3 and `make`.
 make verify
 ```
 
-This is the gate. It builds with Clang and GCC, runs every test with both,
-then the Clang Static Analyzer, clang-tidy, clang-format and cppcheck. It
-takes about three minutes and writes `build-verify/report.json`. A change is
+This is the gate. It builds with Clang and GCC, runs every test with both
+and again under AddressSanitizer and UndefinedBehaviorSanitizer, fuzzes the
+parsers for a minute, then runs the Clang Static Analyzer, clang-tidy,
+clang-format, cppcheck and, for the Python tooling, pyflakes. It takes about
+five minutes and writes `build-verify/report.json`. A change is
 ready for review when every stage passes.
 
 - Do not silence a finding to get through. Fix it, or explain in the pull
   request why the tool is wrong, next to the narrowest possible suppression.
 - A change in behaviour comes with a test that fails without it.
+- A new parser of text that has not been verified yet is added to the fuzz
+  target, [tests/parser_fuzz.cpp](tests/parser_fuzz.cpp).
 - If you change what goes into an image, build it and try it:
   `./image/test-container.sh` runs a container image end to end on your own
   computer.
@@ -51,6 +55,8 @@ request cannot publish anything.
 ## Pull requests
 
 - One subject per pull request.
+- Add a line to [CHANGELOG.md](CHANGELOG.md) when the change matters to
+  someone running a node or building the images.
 - Say what changed, why, how you tested it, and what is left undone.
 - Commit messages describe the resulting behaviour.
 - Never include private keys, credentials, tokens or data from a real host.
