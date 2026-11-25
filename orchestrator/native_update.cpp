@@ -962,6 +962,8 @@ int FetchWorker(const Settings& c, const std::string& what) {
  * the sequence already seen must be byte-for-byte the one seen. The accepted
  * index is kept, so a later check cannot be answered with an earlier list. */
 ReleaseIndex Controller::CheckReleases() {
+  // Say that no store is configured before anything is created for one.
+  (void)Store(c_);
   PrepareFetchFolders();
   const auto worker = Command({self_path, c_.config.string(), "fetch-worker", "index"}, 150, 16 * 1024);
   if (worker.exit != 0)
