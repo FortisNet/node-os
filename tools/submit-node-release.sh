@@ -38,7 +38,8 @@ for architecture in x86_64 aarch64; do
   cp "$folder/manifest" "$staging/fortis-node-$architecture.manifest"
 done
 
-tag=node-$version
+# "node-VERSION"; a version that already starts with "node-" keeps its one prefix.
+tag=node-${version#node-}
 if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   echo "$tag already exists. A node release is never replaced; build the next version." >&2
   exit 1

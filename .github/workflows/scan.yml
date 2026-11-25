@@ -1,0 +1,57 @@
+# Look for newly published vulnerabilities in the images people run.
+#
+# A vulnerability is published on its own day, not by a commit, so this runs
+# every week against what is on ghcr.io. It fails when a package in an image
+# has a high or critical vulnerability that Alpine has already fixed: that is
+# the signal to update image/packages.*.lock and publish new images.
+# Everything found, fixed or not, is listed under Security, Code scanning.
+name: Scan images
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scan:
+    name: Scan ${{ matrix.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [edge, latest]
+    permissions:
+      contents: read
+      packages: read
+      security-events: write   # list the findings under Code scanning
+    env:
+      IMAGE: ghcr.io/fortisnet/node-os:${{ matrix.tag }}
+    steps:
+      - name: Is there such an image?
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "$IMAGE has not been published yet; nothing to scan." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Scan
+        id: scan
+        if: steps.image.outputs.exists == 'yes'
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
+        with:
+          image: ${{ env.IMAGE }}
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: true
+      - name: List the findings under Code scanning
+        if: always() && steps.image.outputs.exists == 'yes' && steps.scan.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: image-${{ matrix.tag }}

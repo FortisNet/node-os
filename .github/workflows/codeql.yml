@@ -1,0 +1,49 @@
+# CodeQL: GitHub's own analysis of the C++, the Python tooling and these
+# workflows. It adds to the gate (make verify), which already runs the Clang
+# Static Analyzer, clang-tidy and cppcheck. Findings are listed under
+# Security, Code scanning.
+name: CodeQL
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * 3'
+permissions:
+  contents: read
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write   # list the findings under Code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      # CodeQL watches the compiler work: both programs and the tests' own code.
+      - name: Build
+        if: matrix.build-mode == 'manual'
+        run: make -j"$(nproc)" CC=gcc-13 CXX=g++-13 all build/release_ledger_test build/sandbox_spec_test
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          category: /language:${{ matrix.language }}

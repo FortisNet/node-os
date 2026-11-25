@@ -1,5 +1,6 @@
 """Throwaway certificate authority and server certificate for the tests."""
 from pathlib import Path
+import socket
 import subprocess
 
 

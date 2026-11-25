@@ -132,7 +132,58 @@ jobs:
       - name: Fetch the pinned, signed node release
         run: ./image/fetch-node-release.sh
       - name: Build the disk image and both container images
-        run: ./image/build-image.sh dist/node-release image/release-public.pem "dist/$VERSION"
+        id: build
+        run: |
+          ./image/build-image.sh dist/node-release image/release-public.pem "dist/$VERSION"
+          echo "commit=$(git rev-parse HEAD | cut -c1-12)" >> "$GITHUB_OUTPUT"
+      - name: List what is inside the x86_64 image (SPDX)
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          image: fortis-node-os:${{ steps.build.outputs.commit }}-x86_64
+          format: spdx-json
+          output-file: dist/image/fortis-node-os-x86_64-${{ steps.build.outputs.commit }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Look for known vulnerabilities in the x86_64 image
+        id: scan-x86_64
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
+        with:
+          sbom: dist/image/fortis-node-os-x86_64-${{ steps.build.outputs.commit }}.spdx.json
+          output-format: table
+          output-file: ${{ runner.temp }}/vulnerabilities-x86_64.txt
+          # Reported, not enforced: a vulnerability is published on its own
+          # day, not by a commit. The weekly scan (scan.yml) is what fails.
+          fail-build: false
+      - name: List what is inside the aarch64 image (SPDX)
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          image: fortis-node-os:${{ steps.build.outputs.commit }}-aarch64
+          format: spdx-json
+          output-file: dist/image/fortis-node-os-aarch64-${{ steps.build.outputs.commit }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Look for known vulnerabilities in the aarch64 image
+        id: scan-aarch64
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
+        with:
+          sbom: dist/image/fortis-node-os-aarch64-${{ steps.build.outputs.commit }}.spdx.json
+          output-format: table
+          output-file: ${{ runner.temp }}/vulnerabilities-aarch64.txt
+          # Reported, not enforced: a vulnerability is published on its own
+          # day, not by a commit. The weekly scan (scan.yml) is what fails.
+          fail-build: false
+      - name: Show the vulnerability reports
+        env:
+          REPORTS: ${{ runner.temp }}
+        run: |
+          for architecture in x86_64 aarch64; do
+            {
+              echo "### Known vulnerabilities, $architecture image"
+              echo '```'
+              cat "$REPORTS/vulnerabilities-$architecture.txt"
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: images
@@ -185,7 +236,7 @@ jobs:
     permissions:
       contents: write       # create the release and its tag
       packages: write       # push container images to ghcr.io
-      id-token: write       # sign the provenance statements
+      id-token: write       # sign the provenance statements and the images
       attestations: write   # store them
     env:
       VERSION: ${{ needs.plan.outputs.version }}
@@ -204,6 +255,7 @@ jobs:
         with:
           name: images
           path: release
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
       - name: Write the checksum list
         working-directory: release
         run: |
@@ -212,6 +264,10 @@ jobs:
           sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
           mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
           cat SHA256SUMS
+      # A signature anyone can check with cosign alone, without GitHub's
+      # tools. The certificate names this workflow; there is no key to keep.
+      - name: Sign the checksum list
+        run: cosign sign-blob --yes --bundle release/SHA256SUMS.sigstore.json release/SHA256SUMS
       - name: Attest where the files were built
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -241,6 +297,11 @@ jobs:
             echo "name=$name"
             echo "digest=$digest"
           } >> "$GITHUB_OUTPUT"
+      - name: Sign the container images
+        if: env.IMAGES == 'yes'
+        env:
+          IMAGE: ${{ steps.registry.outputs.name }}@${{ steps.registry.outputs.digest }}
+        run: cosign sign --yes --recursive "$IMAGE"
       - name: Attest the container image
         if: env.IMAGES == 'yes'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -268,13 +329,14 @@ jobs:
               echo "| \`fortis-node-os-x86_64-*.docker.tar.gz\` | Docker on an Intel or AMD server |"
               echo "| \`fortis-node-os-aarch64-*.docker.tar.gz\` | Docker on an ARM server |"
               echo "| \`fortis-node-os-orchestrator-*.tar.gz\` | The orchestrator alone, for building your own image |"
+              echo "| \`*.spdx.json\` | The list of software in the images of each processor family (SBOM) |"
               echo
               echo "The container images are also at \`ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')\`."
             else
               echo "This build holds the orchestrator only. Images are built once a signed node release is pinned in \`image/node-release.conf\`."
             fi
             echo
-            echo "Check a download before using it: \`sha256sum -c SHA256SUMS --ignore-missing\`, and \`gh attestation verify FILE --repo $REPOSITORY\` to confirm it was built here from this commit. See docs/releasing.md."
+            echo "Check a download before using it: \`sha256sum -c SHA256SUMS --ignore-missing\`, and \`gh attestation verify FILE --repo $REPOSITORY\` to confirm it was built here from this commit. \`SHA256SUMS\` and the container images are also signed with cosign. See docs/releasing.md."
           } > "$notes"
           if [ "$CHANNEL" = edge ]; then
             # The rolling pre-release: its tag moves to the commit just built.

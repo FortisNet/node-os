@@ -429,4 +429,5 @@ manager, on the running host, whether the database still matches the files.
 | --- | --- |
 | [packages.remove](packages.remove) | What is taken out, with reasons |
 | [packages.why](packages.why) | Why each remaining package is there |
+| [packages.x86_64.lock](packages.x86_64.lock), [packages.aarch64.lock](packages.aarch64.lock) | The exact version of every package in the node host images. A build that would install anything else fails, so one commit always builds the same system; `FORTIS_UPDATE_PACKAGE_LOCK=1 ./build-image.sh ...` rewrites them for review |
 | [readme_packages.py](readme_packages.py) | Writes the table above from those two files and the built image; `make verify` checks it |

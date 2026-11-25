@@ -18,13 +18,27 @@ You need Docker, Python 3 and `make`. Nothing else is installed on your
 computer: compilers and checkers run in a container the gate builds itself.
 
 ```sh
-make verify                       # the full gate, about three minutes
+make verify                       # the full gate, about five minutes
 make release VERSION=1.2.3        # hardened static releases: dist/1.2.3/x86_64 and dist/1.2.3/aarch64
 ```
 
-`make verify` builds with Clang and GCC, runs every test with both, then the
-Clang Static Analyzer, clang-tidy, clang-format and cppcheck, with the
-network switched off. It writes `build-verify/report.json`: one result per
+`make verify` runs these stages, with the network switched off:
+
+| Stage | What it does |
+| --- | --- |
+| `clang` | Builds with Clang and libc++, runs every test |
+| `gcc` | Builds with GCC, runs every test |
+| `sanitizers` | Builds with AddressSanitizer and UndefinedBehaviorSanitizer, runs every test under them, then fuzzes the parsers of unverified text for a minute ([tests/parser_fuzz.cpp](../tests/parser_fuzz.cpp)) |
+| `analyzer` | The Clang Static Analyzer on every source file |
+| `lint` | clang-tidy on every source file, clang-format on all but `lib/` |
+| `cppcheck` | cppcheck on every source file |
+| `python` | pyflakes on every Python file |
+
+`python3 verify.py --stage NAME` runs one of them. To fuzz for longer, use
+the sanitizer build: `make fuzz FUZZ_SECONDS=3600` with the flags that stage
+prints.
+
+It writes `build-verify/report.json`: one result per
 stage and the hash of every input file. **A release can only be built from
 files whose report is complete, passing and unchanged**; `build-release.sh`
 checks this before and after it builds.
@@ -49,7 +63,10 @@ shared library, no writable and executable segment.
 ```
 
 `NODE_RELEASE` is a signed release of the FortisNet node holding `x86_64/`
-and `aarch64/`. See [image/README.md](../image/README.md) for the arguments
+and `aarch64/`. The exact version of every Alpine package is pinned in
+`image/packages.x86_64.lock` and `image/packages.aarch64.lock`; when Alpine
+publishes an update the build stops and shows the difference. Review it,
+rebuild with `FORTIS_UPDATE_PACKAGE_LOCK=1` and commit the two files. See [image/README.md](../image/README.md) for the arguments
 and [images.md](images.md) for what comes out.
 
 ### Trying a container image on your own computer

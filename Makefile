@@ -6,7 +6,9 @@
 #   make                    build both programs into build/
 #   make test               build and run every test
 #   make verify             the full gate, in a container: two compilers,
-#                           static analysis, lint, cppcheck and every test
+#                           sanitizers, fuzzing, static analysis, lint,
+#                           cppcheck and every test
+#   make fuzz               fuzz the parsers (needs Clang; see verify.py)
 #   make release VERSION=v  hardened static releases for x86_64 and aarch64
 #   make BUILD=dir CXX=...  build elsewhere, or with another compiler
 #
@@ -38,12 +40,14 @@ CPPFLAGS := $(MBEDTLS_DEFINES) -DFORTIS_ORCHESTRATOR_VERSION=\"$(ORCHESTRATOR_VE
 ORCHESTRATOR_SOURCES := $(addprefix orchestrator/,native_update.cpp node_keeper.cpp acme_client.cpp page_server.cpp release_ledger.cpp backup.cpp release_fetch.cpp pages.cpp first_boot.cpp)
 SANDBOX_SOURCES := sandbox/sandbox_spec.cpp sandbox/sandbox_manager.cpp
 LIB_SOURCES := lib/bounded_json.cpp lib/outbound_https.cpp lib/sandbox_socket.cpp
-TEST_SOURCES := tests/release_ledger_test.cpp tests/sandbox_spec_test.cpp
+TEST_SOURCES := tests/release_ledger_test.cpp tests/sandbox_spec_test.cpp tests/parser_fuzz.cpp
+# How long `make fuzz` runs.
+FUZZ_SECONDS ?= 60
 SOURCES := $(ORCHESTRATOR_SOURCES) $(SANDBOX_SOURCES) $(LIB_SOURCES) $(TEST_SOURCES)
 HEADERS := $(wildcard lib/*.h orchestrator/*.h sandbox/*.h)
 object = $(patsubst %.cpp,$(BUILD)/%.o,$(1))
 
-.PHONY: all test unit-tests tool-tests clean release sandbox-runtime-test verify
+.PHONY: all test unit-tests tool-tests fuzz clean release sandbox-runtime-test verify
 .PHONY: print-sources print-flags print-default-flags print-native-controller-sources print-fortis-sandbox-sources
 all: $(BUILD)/native-controller $(BUILD)/fortis-sandbox
 
@@ -81,6 +85,13 @@ $(BUILD)/release_ledger_test: $(call object,tests/release_ledger_test.cpp orches
 	$(CXX) $(CXXFLAGS) $(filter %.o,$^) $(MBEDTLS)/library/libmbedcrypto.a -pthread -o $@
 $(BUILD)/sandbox_spec_test: $(call object,tests/sandbox_spec_test.cpp sandbox/sandbox_spec.cpp lib/bounded_json.cpp)
 	$(CXX) $(CXXFLAGS) $(filter %.o,$^) -pthread -o $@
+# The parsers of unverified text, under libFuzzer. CXXFLAGS must name the
+# sanitizers and -fsanitize=fuzzer-no-link, as the gate's sanitizer stage does.
+$(BUILD)/parser_fuzz: $(call object,tests/parser_fuzz.cpp orchestrator/release_fetch.cpp sandbox/sandbox_spec.cpp lib/bounded_json.cpp lib/outbound_https.cpp) $(MBEDTLS_LIBS)
+	$(CXX) $(CXXFLAGS) -fsanitize=fuzzer $(filter %.o,$^) $(MBEDTLS_LIBS) -pthread -o $@
+fuzz: $(BUILD)/parser_fuzz
+	@mkdir -p $(BUILD)/fuzz-corpus
+	$(BUILD)/parser_fuzz -max_total_time=$(FUZZ_SECONDS) -max_len=4096 -timeout=10 -print_final_stats=1 $(BUILD)/fuzz-corpus tests/fuzz-seeds
 
 unit-tests: $(BUILD)/release_ledger_test $(BUILD)/sandbox_spec_test
 	$(BUILD)/release_ledger_test

@@ -1,0 +1,61 @@
+name: Bug report
+description: Something does not work as the documentation says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting it. Security problems do not go here: see
+        [SECURITY.md](https://github.com/FortisNet/node-os/blob/main/SECURITY.md).
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: The steps, starting from a new machine or container if you can.
+    validations:
+      required: true
+  - type: dropdown
+    id: packaging
+    attributes:
+      label: Where it runs
+      options:
+        - Disk image on a virtual machine
+        - Container image, x86-64
+        - Container image, ARM64
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Cloud or computer
+      placeholder: DigitalOcean, Hetzner, a home server, Docker Desktop on a Mac ...
+  - type: textarea
+    id: image
+    attributes:
+      label: Which image
+      description: The contents of `/etc/fortis-image` on the host. It holds no secrets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The relevant lines of the orchestrator's log (`docker logs fortis-node`, or
+        `/var/log/fortis-orchestrator.log`). Remove addresses and anything else
+        you do not want public.
+      render: text
