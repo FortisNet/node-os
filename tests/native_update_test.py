@@ -763,7 +763,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         names = [check['name'] for check in self.health()['orchestrator']['checks']]
         self.assertIn('Releases', names)
 
-    def test_in_a_container_the_runtime_is_told_to_make_no_keyring(self):
+    def test_in_a_container_the_runtime_avoids_what_docker_forbids(self):
         self.run_action('update', self.release)
         runs = [json.loads(line) for line in (self.path / 'commands').read_text().splitlines()]
         runs = [command for command in runs if command[0] == 'run']
@@ -771,7 +771,8 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         # The gate runs in a container; a direct `make test` may not.
         contained = Path('/.dockerenv').exists() or Path('/run/.containerenv').exists()
         for command in runs:
-            self.assertEqual('--no-new-keyring' in command, contained, command)
+            for option in ('--no-new-keyring', '--no-pivot'):
+                self.assertEqual(option in command, contained, command)
 
     def test_stopping_the_node_brings_up_the_page_server(self):
         self.direct_https(domain=None)
