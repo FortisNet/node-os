@@ -1,5 +1,4 @@
-[![FortisNet](assets/fortisnet-lockup-black.svg#gh-light-mode-only)](https://fortisnet.io)
-[![FortisNet](assets/fortisnet-lockup.svg#gh-dark-mode-only)](https://fortisnet.io)
+[![FortisNet](assets/fortisnet-lockup-black.svg)](https://fortisnet.io)
 
 > *People and AI agents will work across borders, services and networks.
 > They need a shared foundation for identity, resources, value and
