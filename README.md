@@ -1,11 +1,5 @@
-<p>
-  <a href="https://fortisnet.io">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="assets/fortisnet-lockup.svg">
-      <img src="assets/fortisnet-lockup-black.svg" alt="FortisNet" width="260">
-    </picture>
-  </a>
-</p>
+[![FortisNet](assets/fortisnet-lockup-black.svg#gh-light-mode-only)](https://fortisnet.io)
+[![FortisNet](assets/fortisnet-lockup.svg#gh-dark-mode-only)](https://fortisnet.io)
 
 # FortisNet Node OS
 
@@ -223,9 +217,4 @@ merged, and [GOVERNANCE.md](GOVERNANCE.md) who decides. Please read the
 
 ---
 
-<p align="center">
-  <a href="https://fortisnet.io">FortisNet</a> |
-  <a href="https://blockchain.fortisnet.io">Blockchain</a> |
-  <a href="https://token.fortisnet.io">XFN</a> |
-  <a href="https://wallet.fortisnet.io">Wallet</a>
-</p>
+[FortisNet](https://fortisnet.io) | [Blockchain](https://blockchain.fortisnet.io) | [XFN](https://token.fortisnet.io) | [Wallet](https://wallet.fortisnet.io)
