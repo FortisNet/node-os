@@ -12,8 +12,8 @@ behind unnoticed.
 
   check_lib_origin.py                 every file in lib/ has an entry, and the reverse
   check_lib_origin.py NODE_CHECKOUT   also: no origin has changed since it was copied.
-                                      NODE_CHECKOUT is a checkout of the node's
-                                      repository, the folder that holds node/
+                                      NODE_CHECKOUT is a checkout of
+                                      https://github.com/FortisNet/node
 """
 import hashlib
 import json

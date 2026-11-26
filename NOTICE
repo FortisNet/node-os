@@ -6,7 +6,8 @@ This product is licensed under the Apache License, Version 2.0 (LICENSE).
 It includes or is built with software from other projects. Their license
 and copyright notices apply to those parts:
 
-- lib/ holds source files copied from the FortisNet node (Apache-2.0);
+- lib/ holds source files copied from the FortisNet node
+  (https://github.com/FortisNet/node, Apache-2.0);
   lib/ORIGIN.json records each origin.
 - Mbed TLS (Apache-2.0) is built from a pinned source archive that
   tools/fetch-mbedtls.sh downloads; its license is copied into every release.

@@ -30,8 +30,9 @@ Only the newest release is supported with fixes.
 - The update path: signatures, the release index, staging, rollback.
 - Certificate handling and the page server.
 
-The FortisNet node itself lives in another repository; report problems in
-the node there.
+The FortisNet node itself lives in
+[FortisNet/node](https://github.com/FortisNet/node); report problems in the
+node there.
 
 ## What the design assumes
 

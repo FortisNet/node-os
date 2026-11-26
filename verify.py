@@ -114,7 +114,10 @@ def each(names, one, log):
 
 def stage(name, log):
     if name == 'sanitizers':
-        return run(make(name, 'test', 'fuzz'), log, env={**os.environ, **SANITIZER_OPTIONS})
+        # One after the other: the fuzzer takes every processor it is given, and
+        # the tests time real processes starting.
+        environment = {**os.environ, **SANITIZER_OPTIONS}
+        return run(make(name, 'test'), log, env=environment) or run(make(name, 'fuzz'), log, env=environment)
     if name in COMPILERS:
         return run(make(name, 'test'), log)
     if name == 'python':
