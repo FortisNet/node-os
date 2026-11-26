@@ -1,6 +1,7 @@
 """A release store for the host tests: static files over HTTPS on loopback,
 with range requests, the way an object store serves them."""
 import http.server
+import os
 from pathlib import Path
 import re
 import ssl
@@ -23,14 +24,17 @@ class Store:
 
             def do_GET(self):
                 store.requests.append((self.path, self.headers.get('Range')))
-                target = (store.folder / self.path.lstrip('/')).resolve()
-                if store.folder.resolve() not in target.parents or not target.is_file():
+                # Serve only files inside the store's folder, whatever the path says.
+                root = os.path.realpath(store.folder)
+                name = os.path.normpath(os.path.join(root, self.path.lstrip('/')))
+                if not name.startswith(root + os.sep) or not os.path.isfile(name):
                     self.send_response(404)
                     self.send_header('Content-Length', '0')
                     self.send_header('Connection', 'close')
                     self.end_headers()
                     return
-                data, status = target.read_bytes(), 200
+                with open(name, 'rb') as file:
+                    data, status = file.read(), 200
                 requested = re.fullmatch(r'bytes=(\d+)-(\d+)', self.headers.get('Range') or '')
                 if requested:
                     first, last = int(requested[1]), min(int(requested[2]), len(data) - 1)
@@ -49,6 +53,7 @@ class Store:
 
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.url = f'https://127.0.0.1:{self.server.server_address[1]}'

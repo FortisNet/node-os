@@ -8,7 +8,7 @@ anything may change between minor versions.
 Node releases (`node-VERSION` on the releases page) are the FortisNet node
 itself and have their own history in the node's repository.
 
-## [0.1.0] - not tagged yet
+## [0.1.0] - 2026-11-26
 
 The first numbered release.
 
@@ -34,7 +34,7 @@ The first numbered release.
 ### Known limits
 
 - The node inside runs in development mode.
-- Container images need `--privileged`.
+- Container images run without `--privileged` but still hold `SYS_ADMIN`.
 - The orchestrator and the Alpine base are updated only by a new image.
 - The status page is plain HTTP until the certificate is issued.
 - The disk image has been started in an emulator, not yet on a real cloud.

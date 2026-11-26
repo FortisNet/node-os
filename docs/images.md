@@ -88,7 +88,7 @@ changes is who does the jobs around them:
 | Where the data lives | The machine's disk, `/var/lib/fortis` | A Docker volume mounted at `/var/lib/fortis` |
 | Logging in | SSH as `alpine`, then `doas fortis status` | `docker exec fortis-node fortis status` |
 | The orchestrator's log | `/var/log/fortis-orchestrator.log` | `docker logs fortis-node` |
-| Isolation | Its own kernel: the strongest kind | Shares the server's kernel and needs `--privileged`, so it is close to being administrator of the server |
+| Isolation | Its own kernel: the strongest kind | Shares the server's kernel and holds the `SYS_ADMIN` right inside its container (not `--privileged`): weaker than a machine of its own |
 
 Choose the disk image when you can give the node a machine of its own. Choose
 the container image when the server already exists and runs other things.

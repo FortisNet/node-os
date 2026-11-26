@@ -27,6 +27,7 @@ name=fortis-host-test-$$
 authority=$name-authority
 node=$name-node
 shared=$name-shared
+rights='--cap-add SYS_ADMIN --cap-add NET_ADMIN --cap-add SYS_PTRACE --security-opt apparmor=unconfined --cgroupns private'
 
 docker image inspect "$image" >/dev/null 2>&1 || { echo "No such image here: $image" >&2; exit 2; }
 wanted=$(docker image inspect "$image" --format '{{.Architecture}}')
@@ -72,7 +73,9 @@ directory=$(docker exec "$authority" cat /shared/directory)
 ca=$(docker exec "$authority" cat /shared/ca)
 port=$(docker port "$authority" 443/tcp | sed -n 's/.*://p' | head -n 1)
 
-docker run -d --name "$node" --network "container:$authority" --privileged --init --stop-timeout 240 \
+# The rights the README tells people to give it; FORTIS_TEST_RIGHTS tries others.
+# shellcheck disable=SC2086
+docker run -d --name "$node" --network "container:$authority" ${FORTIS_TEST_RIGHTS:-$rights} --init --stop-timeout 240 \
   -v "$shared:/shared:ro" \
   -e FORTIS_HTTPS_IP=127.0.0.1 -e FORTIS_NATIVE_ACME_LOOPBACK=1 \
   -e "FORTIS_NATIVE_ACME_DIRECTORY=$directory" -e "FORTIS_NATIVE_TLS_CA=$ca" \
@@ -94,7 +97,18 @@ done
 unlink "$trust"
 if [ -z "$report" ]; then
   echo 'FAILED: the node did not come up healthy over HTTPS. The container said:' >&2
-  docker logs "$node" 2>&1 | tail -n 40 >&2
+  docker logs "$node" 2>&1 | tail -n 40 | uniq -c >&2
+  # The orchestrator only knows that the container runtime refused. Ask the
+  # runtime itself why, with the first bundle the orchestrator prepared.
+  echo 'The container runtime, asked directly:' >&2
+  docker exec "$node" sh -c '
+    for bundle in /var/lib/fortis/state/run/*/; do
+      [ -f "$bundle/config.json" ] || continue
+      (cd "$bundle" && crun --root /tmp/crun-why run --bundle . why </dev/null 2>&1 | head -n 5)
+      break
+    done
+    grep -E "^(CapEff|Seccomp):" /proc/self/status
+    grep " /sys/fs/cgroup " /proc/mounts; cat /sys/fs/cgroup/cgroup.subtree_control' >&2 || true
   exit 1
 fi
 filtered=$(docker exec "$node" sh -c 'grep -l "^Seccomp:.2" /proc/[0-9]*/status 2>/dev/null | wc -l')

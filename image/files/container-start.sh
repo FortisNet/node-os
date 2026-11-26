@@ -13,6 +13,12 @@ set -eu
 # on a machine. Without the rights for this the orchestrator still starts and
 # its log says the node could not be started.
 groups=/sys/fs/cgroup
+# Docker hands a container its control groups read-only unless it runs with
+# --privileged. They are this container's own (--cgroupns private), so make
+# them writable; that needs the SYS_ADMIN capability and nothing more.
+if [ -f "$groups/cgroup.controllers" ] && ! mkdir -p "$groups/init" 2>/dev/null; then
+  mount -o remount,rw "$groups" 2>/dev/null || true
+fi
 if [ -f "$groups/cgroup.controllers" ] && mkdir -p "$groups/init" 2>/dev/null; then
   while read -r process; do
     echo "$process" >"$groups/init/cgroup.procs" 2>/dev/null || true
@@ -24,7 +30,7 @@ if [ -f "$groups/cgroup.controllers" ] && mkdir -p "$groups/init" 2>/dev/null; t
       echo "Control group controller not available: $controller" >&2
   done
 else
-  echo 'Control groups cannot be prepared; start the container with --privileged' >&2
+  echo 'Control groups cannot be prepared; start the container with the options in the README' >&2
 fi
 config=/etc/fortis/orchestrator.conf
 if [ ! -e "$config" ] && [ ! -e /etc/fortis/first-boot.conf ]; then

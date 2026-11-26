@@ -4,13 +4,24 @@
 
 Please do not open a public issue for a security problem.
 
-Use GitHub's private vulnerability reporting for this repository: the
-**Security** tab, then **Report a vulnerability**. Say what is affected, how
+Use GitHub's private vulnerability reporting for this repository:
+<https://github.com/FortisNet/node-os/security/advisories/new> (the
+**Security** tab, then **Report a vulnerability**). Say what is affected, how
 to reproduce it and what an attacker gains. Do not include private keys,
 credentials or data from a real host.
 
-No response time is promised yet. Reports are read, and fixes are made on
-the `main` branch.
+## What happens next
+
+- We aim to acknowledge a report within 5 working days.
+- We tell you whether we can reproduce it and what we plan to do, and keep
+  you informed until it is fixed.
+- Fixes are made on the `main` branch and published as a new release. The
+  problem is then described in a
+  [security advisory](https://github.com/FortisNet/node-os/security/advisories),
+  with credit to you unless you prefer otherwise.
+- Please give us up to 90 days before publishing details yourself.
+
+Only the newest release is supported with fixes.
 
 ## What is in scope
 
@@ -28,8 +39,10 @@ the node there.
   release signing key. A host runs any node release that key signs.
 - The release store, the certificate authority's answers, the address
   lookup services and the network are not trusted.
-- A container image runs with `--privileged`, which is close to being
-  administrator of the server it runs on. A machine of its own is the
-  stronger arrangement.
+- A container image runs with the capabilities `SYS_ADMIN`, `NET_ADMIN`
+  and `SYS_PTRACE` and without Docker's AppArmor profile. That is much less
+  than `--privileged` (no devices, no kernel modules, Docker's system call
+  filter stays), but `SYS_ADMIN` is broad and the container shares the
+  server's kernel. A machine of its own is the stronger arrangement.
 - Backups are not encrypted. Protecting a backup that leaves the host is the
   operator's job.

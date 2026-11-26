@@ -69,7 +69,8 @@ class Authority:
                 self.send_header('Content-Length', str(len(data)))
                 self.send_header('Replay-Nonce', authority.nonce())
                 if location:
-                    self.send_header('Location', location)
+                    # One header line, whatever the request that led here held.
+                    self.send_header('Location', location.replace('\r', '').replace('\n', ''))
                 self.send_header('Connection', 'close')
                 self.end_headers()
                 self.wfile.write(data)
@@ -98,6 +99,7 @@ class Authority:
 
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.port = self.server.server_address[1]

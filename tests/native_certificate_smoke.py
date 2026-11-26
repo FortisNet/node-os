@@ -104,6 +104,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
     def served():
         """The certificate the node presents for its address, verified against the test authority."""
         context = ssl.create_default_context(cafile=str(ca))
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         with socket.create_connection(('127.0.0.1', TLS_PORT), timeout=10) as raw:
             with context.wrap_socket(raw, server_hostname='127.0.0.1') as secure:
                 secure.sendall(f'GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:{TLS_PORT}\r\nConnection: close\r\n\r\n'.encode())
