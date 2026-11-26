@@ -4,13 +4,24 @@
 
 Please do not open a public issue for a security problem.
 
-Use GitHub's private vulnerability reporting for this repository: the
-**Security** tab, then **Report a vulnerability**. Say what is affected, how
+Use GitHub's private vulnerability reporting for this repository:
+<https://github.com/FortisNet/node-os/security/advisories/new> (the
+**Security** tab, then **Report a vulnerability**). Say what is affected, how
 to reproduce it and what an attacker gains. Do not include private keys,
 credentials or data from a real host.
 
-No response time is promised yet. Reports are read, and fixes are made on
-the `main` branch.
+## What happens next
+
+- We aim to acknowledge a report within 5 working days.
+- We tell you whether we can reproduce it and what we plan to do, and keep
+  you informed until it is fixed.
+- Fixes are made on the `main` branch and published as a new release. The
+  problem is then described in a
+  [security advisory](https://github.com/FortisNet/node-os/security/advisories),
+  with credit to you unless you prefer otherwise.
+- Please give us up to 90 days before publishing details yourself.
+
+Only the newest release is supported with fixes.
 
 ## What is in scope
 

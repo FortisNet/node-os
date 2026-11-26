@@ -192,6 +192,18 @@ FORTIS_NATIVE_MIN_REQUESTS=0
             probe.bind(('127.0.0.1', 0))
             return probe.getsockname()[1]
 
+    @staticmethod
+    def free_ports(count):
+        """Ports that differ: asked for one after another, the same one can come back."""
+        probes = [socket.socket() for _ in range(count)]
+        try:
+            for probe in probes:
+                probe.bind(('127.0.0.1', 0))
+            return [probe.getsockname()[1] for probe in probes]
+        finally:
+            for probe in probes:
+                probe.close()
+
     def keeper(self, request):
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(10)
@@ -780,7 +792,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         tls.mkdir()
         ca, certificate, key, _ = create_certificates(tls, 'IP:127.0.0.1')
         self.server_certificate, self.server_key = certificate, key
-        ports = [self.free_port() for _ in range(3)]
+        ports = self.free_ports(3)
         self.authority = Authority(self.path / 'authority', ca, tls / 'ca.key', certificate, key, ports[1])
         self.addCleanup(self.authority.close)
         values = {'FORTIS_HTTPS_IP': '127.0.0.1', 'FORTIS_NATIVE_TLS_CA': str(ca),
@@ -1093,7 +1105,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
                          ['FORTIS_CA_BUNDLE_PATH=/data/ca-bundle.pem'])
 
     def test_dedicated_health_port_is_inherited(self):
-        health, port = self.free_port(), self.free_port()
+        health, port = self.free_ports(2)
         with self.env_file.open('a') as file:
             file.write('FORTIS_HEALTH_PORT=8081\n')
         with self.config.open('a') as file:
@@ -1121,7 +1133,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         tls = self.path / 'tls'
         tls.mkdir()
         ca, certificate, key, _ = create_certificates(tls, 'IP:127.0.0.1')
-        self.ports = [self.free_port() for _ in range(3)]
+        self.ports = self.free_ports(3)
         self.authority = Authority(self.path / 'authority', ca, tls / 'ca.key', certificate, key, self.ports[1])
         self.addCleanup(self.authority.close)
         with self.config.open('a') as file:

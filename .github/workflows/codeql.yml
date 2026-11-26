@@ -36,6 +36,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Mbed TLS is another project's code, pinned by hash and analysed by its
+      # own maintainers. It is built before CodeQL starts watching, so that
+      # findings here are about this repository's code.
+      - name: Build the pinned Mbed TLS
+        if: matrix.build-mode == 'manual'
+        run: make -j"$(nproc)" CC=gcc-13 CXX=g++-13 build/mbedtls-3.6.7/.built
       - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
         with:
           languages: ${{ matrix.language }}

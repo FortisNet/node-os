@@ -1,8 +1,14 @@
 # Test/package builders only; none is a production image. The build context
-# is sandbox; VERIFY_IMAGE is this repository's own toolchain image, which
-# test-linux-sandboxes.sh builds and names.
-ARG VERIFY_IMAGE
-FROM ${VERIFY_IMAGE} AS packager
+# is sandbox. The first stage is this repository's toolchain, kept the same
+# as tools/Dockerfile.verify so that the base is pinned here by its hash too.
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bzip2 ca-certificates clang-18 clang-format-18 clang-tidy-18 cppcheck \
+    gcc-13 g++-13 libc++-18-dev libc++abi-18-dev libclang-rt-18-dev make openssl perl pyflakes3 \
+    python3 shellcheck \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+FROM toolchain AS packager
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates elfutils \
     && rm -rf /var/lib/apt/lists/*
 COPY package_gvisor.py /opt/fortis-build/package_gvisor.py
@@ -15,7 +21,7 @@ RUN set -eu; arch=$(uname -m); \
     python3 /opt/fortis-build/package_gvisor.py --archive /tmp/gvisor.tar.bz2 --architecture "$arch" --profile full --output /out/full; \
     python3 /opt/fortis-build/package_gvisor.py --archive /tmp/gvisor.tar.bz2 --architecture "$arch" --output /out/reduced; \
     rm /tmp/gvisor.tar.bz2
-FROM ${VERIFY_IMAGE} AS test-base
+FROM toolchain AS test-base
 RUN apt-get update && apt-get install -y --no-install-recommends crun busybox-static elfutils \
     && rm -rf /var/lib/apt/lists/*
 COPY tests/sandbox_payload.c /tmp/sandbox_payload.c

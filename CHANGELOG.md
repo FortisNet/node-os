@@ -8,7 +8,7 @@ anything may change between minor versions.
 Node releases (`node-VERSION` on the releases page) are the FortisNet node
 itself and have their own history in the node's repository.
 
-## [0.1.0] - not tagged yet
+## [0.1.0] - 2026-11-26
 
 The first numbered release.
 

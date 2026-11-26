@@ -13,12 +13,9 @@ cd "$root"
 results=$root/build/sandbox
 mkdir -p "$results"
 ./tools/fetch-mbedtls.sh
-# The test images extend this repository's own toolchain image.
-verify_image=fortis-node-os-verify:$(sha256sum tools/Dockerfile.verify 2>/dev/null | cut -c1-12 || shasum -a 256 tools/Dockerfile.verify | cut -c1-12)
-docker image inspect "$verify_image" >/dev/null 2>&1 || docker build -t "$verify_image" - < tools/Dockerfile.verify
 image=fortis-sandbox-integration:local
-docker build -f sandbox/tests/Dockerfile.sandbox --build-arg "VERIFY_IMAGE=$verify_image" --target reduced -t "$image" sandbox
-docker build -f sandbox/tests/Dockerfile.sandbox --build-arg "VERIFY_IMAGE=$verify_image" --target full -t fortis-sandbox-full:local sandbox
+docker build -f sandbox/tests/Dockerfile.sandbox --target reduced -t "$image" sandbox
+docker build -f sandbox/tests/Dockerfile.sandbox --target full -t fortis-sandbox-full:local sandbox
 build=build/sandbox-test
 docker run --rm --mount "type=bind,source=$root,target=/work" "$image" sh -eu -c '
   make -j4 BUILD="$1" CC=clang-18 CXX=clang++-18 "CXXFLAGS=$(make -s print-default-flags) -stdlib=libc++" all unit-tests

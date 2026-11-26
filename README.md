@@ -16,9 +16,9 @@ nothing is typed.
 
 ![The health page of a running node: every check is healthy](docs/health-page.jpg)
 
-> **Status: early.** The images work end to end and are tested, but there is
-> no numbered release yet, and the node inside runs in development mode.
-> Expect changes. See [What is not done yet](#what-is-not-done-yet).
+> **Status: early.** The images work end to end and are tested, but this is
+> a 0.x release and the node inside runs in development mode. Expect
+> changes. See [What is not done yet](#what-is-not-done-yet).
 
 ## What you get
 
@@ -64,7 +64,7 @@ docker run -d --name fortis-node --restart unless-stopped \
   --privileged --init --stop-timeout 240 \
   -p 80:80 -p 443:443 \
   -v fortis-data:/var/lib/fortis \
-  ghcr.io/fortisnet/node-os:edge
+  ghcr.io/fortisnet/node-os:latest
 docker logs -f fortis-node
 ```
 
