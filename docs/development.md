@@ -65,7 +65,9 @@ shared library, no writable and executable segment.
 `NODE_RELEASE` is a signed release of the FortisNet node holding `x86_64/`
 and `aarch64/`. The exact version of every Alpine package is pinned in
 `image/packages.x86_64.lock` and `image/packages.aarch64.lock`; when Alpine
-publishes an update the build stops and shows the difference. Review it,
+publishes an update the build stops and shows the difference. (The build
+installs Alpine's newest packages over the base image, except the kernel
+and the bootloader, whose replacement needs scripts the build does not run.) Review it,
 rebuild with `FORTIS_UPDATE_PACKAGE_LOCK=1` and commit the two files. See [image/README.md](../image/README.md) for the arguments
 and [images.md](images.md) for what comes out.
 

@@ -28,6 +28,8 @@ The first numbered release.
 - For every download: checksums, signed build provenance, a cosign signature
   and a list of the software inside (SPDX).
 - The exact version of every Alpine package in the images is pinned.
+- The image build installs the security fixes Alpine has published since
+  its base image was made (the kernel and bootloader excepted).
 
 ### Known limits
 

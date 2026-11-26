@@ -142,6 +142,11 @@ docker run --rm --privileged \
     # Packages. The image is told what to keep by its own package manager,
     # working on the mounted files; no script from any package is run.
     root="apk --root /mnt/root --no-scripts --no-cache"
+    # Security fixes Alpine has published since the base image was made.
+    # The kernel and the bootloader stay as the base has them: replacing
+    # them needs their install scripts, and nothing from the image is run.
+    held=$(sed -n "s/^P://p" /mnt/root/lib/apk/db/installed | grep -E "^(linux-|limine-|mkinitfs$)" | tr "\n" " ")
+    $root upgrade --ignore $held >/dev/null
     $root add crun nftables openssh-server >/dev/null
     $root del $(sed -n "s/^\([a-z0-9+._-]*\).*/\1/p" /image/packages.remove | grep -v "^+" | grep -v "^$") >/dev/null
     [ "$(cat /mnt/root/etc/apk/arch)" = "$ARCHITECTURE" ] || { echo "Base image is not $ARCHITECTURE" >&2; exit 1; }
