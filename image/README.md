@@ -402,6 +402,7 @@ What differs between the two, and who does the job instead:
 | Network, SSH key, disk | `tiny-cloud` | Docker and the server |
 | Firewall | `nftables` in the image | Only the published ports are reachable; the server's own firewall |
 | Clock | `chronyd` in the image | The server's clock |
+| How the node is put in its own root | `crun` uses `pivot_root` and gives the container a session keyring | Docker's system call filter forbids both, so `crun` is told to move the root into place instead (`--no-pivot`) and to make no keyring. The node has no capability and may not call `chroot` or `mount`, so it cannot leave its root either way |
 | Control groups for the node | OpenRC | `container-start.sh` moves the container's processes into a group of their own and hands the controllers down |
 | Operator access | SSH as `alpine`, `doas fortis status` | `docker exec fortis-node fortis status`, `docker logs fortis-node` |
 | Log of the orchestrator | `/var/log/fortis-orchestrator.log` | `docker logs` |

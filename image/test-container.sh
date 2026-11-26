@@ -104,7 +104,7 @@ if [ -z "$report" ]; then
   docker exec "$node" sh -c '
     for bundle in /var/lib/fortis/state/run/*/; do
       [ -f "$bundle/config.json" ] || continue
-      (cd "$bundle" && crun --root /tmp/crun-why run --bundle . why </dev/null 2>&1 | head -n 5)
+      (cd "$bundle" && crun --root /tmp/crun-why run --no-new-keyring --no-pivot --bundle . why </dev/null 2>&1 | head -n 5)
       break
     done
     grep -E "^(CapEff|Seccomp):" /proc/self/status

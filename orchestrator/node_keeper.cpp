@@ -1,4 +1,5 @@
 #include "node_keeper.h"
+#include "first_boot.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -312,8 +313,17 @@ void Keeper::Launch(Child& child, const NodeContainer& container,
   Check(fcntl(reader.get(), F_SETFD, FD_CLOEXEC), "output pipe close-on-exec");
   Check(fcntl(reader.get(), F_SETFL, O_NONBLOCK), "nonblocking container output");
   const auto pid_file = bundle / "pid";
-  auto command = Crun({"run", "--bundle", bundle.string(), "--pid-file", pid_file.string(), "--preserve-fds",
-                       std::to_string(listeners.size()), child.id});
+  auto command = Crun({"run"});
+  // In a container, Docker's system call filter forbids two things crun does
+  // by default. One is making a session keyring for each container; none is
+  // needed, the node's own filter forbids every keyring call and the helpers
+  // use none. The other, on some servers, is pivot_root; crun then moves the
+  // new root into place and changes root to it instead. What it starts has
+  // no capability, cannot gain one and may not call chroot or mount, so it
+  // cannot leave that root either way.
+  if (HostKind() == "container") command.insert(command.end(), {"--no-new-keyring", "--no-pivot"});
+  command.insert(command.end(), {"--bundle", bundle.string(), "--pid-file", pid_file.string(), "--preserve-fds",
+                                 std::to_string(listeners.size()), child.id});
   std::vector<char*> argv;
   argv.reserve(command.size() + 1);
   for (auto& value : command) argv.push_back(value.data());
