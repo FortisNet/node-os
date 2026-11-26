@@ -97,7 +97,18 @@ done
 unlink "$trust"
 if [ -z "$report" ]; then
   echo 'FAILED: the node did not come up healthy over HTTPS. The container said:' >&2
-  docker logs "$node" 2>&1 | tail -n 40 >&2
+  docker logs "$node" 2>&1 | tail -n 40 | uniq -c >&2
+  # The orchestrator only knows that the container runtime refused. Ask the
+  # runtime itself why, with the first bundle the orchestrator prepared.
+  echo 'The container runtime, asked directly:' >&2
+  docker exec "$node" sh -c '
+    for bundle in /var/lib/fortis/state/run/*/; do
+      [ -f "$bundle/config.json" ] || continue
+      (cd "$bundle" && crun --root /tmp/crun-why run --bundle . why </dev/null 2>&1 | head -n 5)
+      break
+    done
+    grep -E "^(CapEff|Seccomp):" /proc/self/status
+    grep " /sys/fs/cgroup " /proc/mounts; cat /sys/fs/cgroup/cgroup.subtree_control' >&2 || true
   exit 1
 fi
 filtered=$(docker exec "$node" sh -c 'grep -l "^Seccomp:.2" /proc/[0-9]*/status 2>/dev/null | wc -l')
