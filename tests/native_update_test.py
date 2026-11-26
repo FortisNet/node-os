@@ -234,7 +234,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
     def launched(self, kind='node'):
         return json.loads((self.path / f'config-{kind}.json').read_text())
 
-    def package(self, version, *, epoch=1, architecture=ARCHITECTURE, padding=0, machine=None):
+    def package(self, version, *, epoch=1, architecture=ARCHITECTURE, padding=0, machine=None, host_interface=None):
         directory = self.path / ('upload-' + version)
         directory.mkdir()
         binary = bytearray(256)
@@ -251,7 +251,8 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         (directory / 'manifest').write_text(
             f'format=1\nversion={version}\narchitecture={architecture}\n'
             f'runtime=linux-musl-static-v1\nstorage_epoch={epoch}\n'
-            f'sha256={hashlib.sha256(binary).hexdigest()}\nbytes={len(binary)}\n')
+            f'sha256={hashlib.sha256(binary).hexdigest()}\nbytes={len(binary)}\n'
+            + ('' if host_interface is None else f'host_interface={host_interface}\n'))
         self.sign(directory)
         return directory
 
@@ -530,22 +531,32 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         self.run_action('backup', success=False)
         self.assertFalse(self.node_running())
 
-    def release_store(self):
-        """A store on loopback holding release 'one', and a host configured to read it."""
+    def release_store(self, *, automatic=False, delay=0, layout='tree', **publishing):
+        """A store on loopback holding release 'one', and a host configured to read it.
+
+        The operator's commands are tested with automatic updates off; with
+        `automatic`, the host installs by itself after at most `delay` seconds."""
         self.path.chmod(0o755)  # the unprivileged fetch process must reach its own state
         self.store_folder = self.path / 'store'
         self.store_folder.mkdir()
         # A store holds one tree per processor architecture; a host reads its own.
         self.store_tree = self.store_folder / ARCHITECTURE
-        publish_release.publish(self.store_folder, self.release, self.key)
+        self.store_layout = layout
+        self.publish(self.release, **publishing)
         tls = self.path / 'store-tls'
         tls.mkdir()
         ca, certificate, key, _ = create_certificates(tls, 'IP:127.0.0.1')
+        self.store_certificate, self.store_key = certificate, key
         self.store = Store(self.store_folder, certificate, key)
         self.addCleanup(self.store.close)
+        address = self.store.url if layout == 'tree' else 'flat:' + self.store.url
         with self.config.open('a') as file:
-            file.write(f'FORTIS_NATIVE_TLS_CA={ca}\nFORTIS_NATIVE_RELEASE_STORE={self.store.url}\n'
-                       f'FORTIS_NATIVE_RELEASE_STORE_LOOPBACK=1\nFORTIS_NATIVE_FETCH_STATE={self.path / "fetch-state"}\n')
+            file.write(f'FORTIS_NATIVE_TLS_CA={ca}\nFORTIS_NATIVE_RELEASE_STORE={address}\n'
+                       f'FORTIS_NATIVE_RELEASE_STORE_LOOPBACK=1\nFORTIS_NATIVE_FETCH_STATE={self.path / "fetch-state"}\n'
+                       f'FORTIS_NATIVE_AUTO_UPDATE={int(automatic)}\nFORTIS_NATIVE_UPDATE_DELAY_SECONDS={delay}\n')
+
+    def publish(self, release, **options):
+        return publish_release.publish(self.store_folder, release, self.key, layout=self.store_layout, **options)
 
     def staged(self):
         folder = self.root / 'staged'
@@ -743,7 +754,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
     def test_pages_contain_nothing_private(self):
         self.env_file.write_text('NODE_ENV=development\nPROVIDER_API_KEY=secret-provider-key-123\n')
         self.run_action('update', self.release)
-        for name in ('index.html', 'health.html', 'health.json'):
+        for name in ('index.html', 'health.html', 'health.json', 'node.json'):
             text = self.published(name)
             for private in ('secret-provider-key-123', str(self.path), str(self.root), 'fortis-native', 'PROVIDER_API_KEY',
                             'runtime.env'):
@@ -790,6 +801,545 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         self.run_action('start')
         self.assertIn('fortis-node-page SIGTERM', (self.path / 'signals').read_text().split('fortis-node SIGTERM')[-1])
         self.assertTrue(self.node_running())
+
+    # Automatic updates. Every test below drives the supervisor one tick at a
+    # time, the way the service does, against a store on loopback.
+
+    def node_report(self):
+        return json.loads(self.published('node.json'))
+
+    def plan(self):
+        return dict(line.split('=', 1) for line in (self.root / 'update.plan').read_text().splitlines())
+
+    def change_plan(self, **changes):
+        """Rewrite fields of the saved plan: how a test lets time pass."""
+        values = self.plan()
+        values.update({name: str(value) for name, value in changes.items()})
+        (self.root / 'update.plan').write_text(''.join(f'{name}={value}\n' for name, value in values.items()))
+
+    def downloads(self, store=None):
+        """Paths of the executables asked of the store so far."""
+        return [path for path, _ in (store or self.store).requests if 'fortis-node' in path and 'manifest' not in path]
+
+    def test_host_installs_the_newest_release_it_can_run_by_itself(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        # Newer still, but made for a host interface this orchestrator does not offer.
+        self.publish(self.package('three', host_interface=2))
+        self.assertIn('three  (needs host interface 2; this Node OS offers 1 to 1)', self.run_action('releases').stdout)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+        self.assertTrue(self.node_running())
+        self.assertEqual(os.readlink(self.root / 'app/previous'), 'releases/one')
+        report = self.node_report()
+        self.assertEqual(report['schemaVersion'], 1)
+        self.assertEqual(report['running']['version'], 'two')
+        self.assertEqual(report['running']['sha256'],
+                         hashlib.sha256((self.path / 'upload-two/fortis-node').read_bytes()).hexdigest())
+        self.assertEqual(report['running']['hostInterface'], 1)
+        self.assertLess(abs(report['running']['sinceMs'] - time.time() * 1000), 30000)
+        host = report['host']
+        self.assertEqual((host['architecture'], host['hostInterfaceMin'], host['hostInterfaceMax'], host['channel'],
+                          host['automaticUpdates'], host['store']),
+                         (ARCHITECTURE, 1, 1, 'stable', True, self.store.url))
+        self.assertIn(host['runsIn'], ('machine', 'container'))
+        self.assertTrue(host['nodeOsVersion'])
+        update = report['update']
+        self.assertEqual((update['state'], update['candidate'], update['installInSeconds']), ('idle', None, None))
+        self.assertEqual(update['message'], 'Release two was installed.')
+        self.assertLess(abs(update['lastCheckMs'] - time.time() * 1000), 30000)
+        self.assertGreater(update['nextCheckMs'], update['lastCheckMs'])
+        self.assertEqual(report['skipped'],
+                         [{'version': 'three', 'reason': 'needs host interface 2; this Node OS offers 1 to 1'}])
+        self.assertEqual([(event['version'], event['result']) for event in report['history']],
+                         [('two', 'installed'), ('one', 'installed')])
+        # The pages say the same in words, and a release this host cannot run
+        # does not make it unhealthy.
+        for name in ('index.html', 'health.html'):
+            page = self.published(name)
+            self.assertIn('Release two was installed.', page)
+            self.assertIn('A newer release, three, was not installed: it needs host interface 2', page)
+            self.assertIn('A newer Node OS can run it.', page)
+        self.assertEqual((self.health()['status'], self.health()['healthy']), (200, True))
+        # Nothing is left staged for an operator to install, and the next tick has nothing to do.
+        self.assertEqual(self.staged(), [])
+        before = len(self.store.requests)
+        self.run_action('tick')
+        self.assertEqual(len(self.store.requests), before)
+        # An operator cannot fetch what the host cannot run either.
+        self.assertIn('needs host interface 2', self.run_action('fetch', 'three', success=False).stderr)
+        self.assertEqual(self.downloads().count(f'/{ARCHITECTURE}/releases/three/fortis-node'), 0)
+
+    def test_release_needing_another_host_interface_is_refused_however_it_arrives(self):
+        result = self.run_action('update', self.package('newer', host_interface=2), success=False)
+        self.assertIn('this release needs host interface 2; this Node OS offers 1 to 1', result.stderr)
+        for value in ('0', '1001', 'two', ''):
+            with self.subTest(host_interface=value):
+                self.run_action('update', self.package('bad-' + (value or 'empty'), host_interface=value), success=False)
+        self.assertFalse((self.root / 'app/current').exists())
+        # Naming interface 1 is the same as naming none.
+        self.run_action('update', self.package('explicit', host_interface=1))
+        self.assertEqual(self.selected(), 'releases/explicit')
+        self.run_action('tick')
+        self.assertEqual(self.node_report()['running']['hostInterface'], 1)
+
+    def serve_list(self, text):
+        """Put a hand-written, correctly signed list where the store serves it."""
+        (self.store_tree / 'index').write_text(text)
+        subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(self.key), '-out', str(self.store_tree / 'index.sig'),
+                        str(self.store_tree / 'index')], check=True, capture_output=True)
+
+    def test_release_list_formats_are_parsed_strictly(self):
+        self.release_store()
+        now, digest = int(time.time() * 1000), 'a' * 64
+        later = now + 86400000
+        entry = f'release\tone\t{digest}\t256'
+        accepted = [
+            f'format=1\nsequence=10\npublished_ms={now}\n{entry}\n',
+            f'format=2\nsequence=11\npublished_ms={now}\nexpires_ms={later}\nchannel=stable\n{entry}\t1\n',
+            f'format=2\nsequence=12\npublished_ms={now}\nexpires_ms={later}\nchannel=stable\n{entry}\t1\n'
+            f'release\ttwo\t{digest}\t256\t1000\n',
+            f'format=2\nsequence=13\npublished_ms={now}\nexpires_ms={later}\nchannel=stable\n',
+        ]
+        for sequence, text in enumerate(accepted, 10):
+            with self.subTest(accepted=text):
+                self.serve_list(text)
+                self.assertIn(f'Release index {sequence},', self.run_action('releases').stdout)
+        head = f'format=2\nsequence=20\npublished_ms={now}\nexpires_ms={later}\nchannel=stable\n'
+        refused = {
+            'an unknown format': head.replace('format=2', 'format=3') + entry + '\t1\n',
+            'format 2 without its channel': f'format=2\nsequence=20\npublished_ms={now}\nexpires_ms={later}\n{entry}\t1\n',
+            'header lines in another order':
+                f'format=2\nsequence=20\npublished_ms={now}\nchannel=stable\nexpires_ms={later}\n{entry}\t1\n',
+            'a header line twice': head + 'channel=stable\n' + entry + '\t1\n',
+            'a channel nobody knows': head.replace('channel=stable', 'channel=nightly') + entry + '\t1\n',
+            'no expiry': head.replace(f'expires_ms={later}', 'expires_ms=0') + entry + '\t1\n',
+            'an entry without a host interface': head + entry + '\n',
+            'host interface zero': head + entry + '\t0\n',
+            'host interface above the limit': head + entry + '\t1001\n',
+            'host interface that is not a number': head + entry + '\tone\n',
+            'a sixth field': head + entry + '\t1\textra\n',
+            'a version listed twice': head + entry + '\t1\n' + entry + '\t1\n',
+            'a format 1 entry with a host interface': f'format=1\nsequence=20\npublished_ms={now}\n{entry}\t1\n',
+            'format 1 with format 2 header lines':
+                f'format=1\nsequence=20\npublished_ms={now}\nexpires_ms={later}\nchannel=stable\n{entry}\n',
+            'no final line end': head + entry + '\t1',
+        }
+        for reason, text in refused.items():
+            with self.subTest(refused=reason):
+                self.serve_list(text)
+                self.assertRegex(self.run_action('releases', success=False).stderr,
+                                 'release index|invalid bounded integer')
+        self.assertEqual(self.staged(), [])
+
+    def test_expired_release_list_is_refused(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        long_ago = int(time.time() * 1000) - 40 * 86400000   # published 40 days ago, valid for 30
+        self.publish(self.package('two'), now_ms=long_ago)
+        self.assertIn('the release list has expired', self.run_action('releases', success=False).stderr)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        update = self.node_report()['update']
+        self.assertEqual((update['state'], update['candidate']), ('failed', None))
+        self.assertIn('the release list has expired', update['message'])
+        # A store that cannot be used does not make a serving host unhealthy.
+        self.assertEqual((self.health()['status'], self.health()['healthy']), (200, True))
+        # A list that is still valid is taken again.
+        self.publish(self.package('three'), expires_days=1)
+        self.change_plan(next_check_ms=0)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/three')
+
+    def test_release_list_for_another_channel_is_refused(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'), channel='edge')
+        self.assertIn('another channel', self.run_action('releases', success=False).stderr)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertIn('another channel', self.node_report()['update']['message'])
+        # A host that follows that channel takes it.
+        with self.config.open('a') as file:
+            file.write('FORTIS_NATIVE_CHANNEL=edge\n')
+        self.change_plan(next_check_ms=0)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+        self.assertEqual(self.node_report()['host']['channel'], 'edge')
+        self.config.write_text(self.config.read_text().replace('CHANNEL=edge', 'CHANNEL=nightly'))
+        self.assertIn('invalid release channel', self.run_action('status', success=False).stderr)
+
+    def test_install_waits_for_its_random_delay_and_keeps_it_across_restarts(self):
+        self.release_store(automatic=True, delay=3600)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        report = self.node_report()
+        update = report['update']
+        self.assertEqual(update['state'], 'waiting')
+        self.assertEqual(update['candidate'], {'version': 'two', 'hostInterface': 1, 'bytes': 256})
+        self.assertTrue(0 <= update['installInSeconds'] <= 3600, update)
+        self.assertIn('Found release two. It will be installed', update['message'])
+        self.assertIn('Found release two. It will be installed', self.published('index.html'))
+        self.assertIn('http-equiv="refresh"', self.published('index.html'))   # a countdown is worth another look
+        self.assertEqual(self.downloads(), [])   # nothing is downloaded before its time
+        install_at = int(self.plan()['install_at_ms'])
+        self.assertTrue(0 <= install_at - time.time() * 1000 <= 3600 * 1000)
+        # The list is asked for again when the wait is over, not before.
+        self.assertEqual(update['nextCheckMs'], min(install_at, update['lastCheckMs'] + 3600 * 1000))
+        # Every tick is a new process: the time chosen is kept, and until it
+        # comes nothing is installed. (A wait that happens to end within
+        # seconds, once in some hundred runs, cannot show that.)
+        if install_at - time.time() * 1000 > 15000:
+            requests = len(self.store.requests)
+            self.run_action('tick')
+            self.assertEqual(self.selected(), 'releases/one')
+            self.assertEqual(int(self.plan()['install_at_ms']), install_at)
+            self.assertEqual(len(self.store.requests), requests)
+            self.assertLessEqual(self.node_report()['update']['installInSeconds'], update['installInSeconds'])
+        # The wait is over.
+        past = int(time.time() * 1000) - 1000
+        self.change_plan(install_at_ms=past, next_check_ms=past)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+        self.assertEqual(self.node_report()['update']['state'], 'idle')
+        self.assertNotIn('http-equiv="refresh"', self.published('index.html'))
+
+    def test_random_delay_differs_from_run_to_run(self):
+        self.release_store(automatic=True, delay=3600)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        waits = set()
+        for _ in range(4):
+            (self.root / 'update.plan').unlink(missing_ok=True)
+            self.run_action('tick')
+            waits.add(int(self.plan()['install_at_ms']) - int(self.plan()['last_check_ms']))
+        self.assertTrue(all(0 <= wait <= 3601 * 1000 for wait in waits), waits)
+        self.assertGreater(len(waits), 1)
+
+    def test_automatic_updates_switched_off_install_nothing(self):
+        self.release_store(automatic=False)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        self.store.requests.clear()
+        for _ in range(2):
+            self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(self.store.requests, [])
+        report = self.node_report()
+        self.assertEqual((report['update']['state'], report['host']['automaticUpdates']), ('off', False))
+        self.assertIn('switched off', report['update']['message'])
+        self.assertFalse((self.root / 'update.plan').exists())
+        # The operator's commands work as before.
+        self.run_action('fetch', 'two')
+        self.run_action('update', 'two')
+        self.assertEqual(self.selected(), 'releases/two')
+
+    def test_invalid_automatic_update_settings_are_refused(self):
+        for setting in ('FORTIS_NATIVE_AUTO_UPDATE=2', 'FORTIS_NATIVE_UPDATE_CHECK_SECONDS=29',
+                        'FORTIS_NATIVE_UPDATE_CHECK_SECONDS=86401', 'FORTIS_NATIVE_UPDATE_DELAY_SECONDS=3601',
+                        'FORTIS_NATIVE_UPDATE_DELAY_SECONDS=soon', 'FORTIS_NATIVE_CHANNEL=Stable'):
+            with self.subTest(setting=setting):
+                original = self.config.read_text()
+                self.config.write_text(original + setting + '\n')
+                self.run_action('status', success=False)
+                self.config.write_text(original)
+        with self.config.open('a') as file:
+            file.write('FORTIS_NATIVE_UPDATE_CHECK_SECONDS=30\nFORTIS_NATIVE_UPDATE_DELAY_SECONDS=3600\n'
+                       'FORTIS_NATIVE_CHANNEL=edge\nFORTIS_NATIVE_AUTO_UPDATE=1\n')
+        self.run_action('status')
+
+    def test_release_store_spellings(self):
+        def configured(store):
+            original = self.config.read_text()
+            self.config.write_text(original + f'FORTIS_NATIVE_RELEASE_STORE={store}\nFORTIS_NATIVE_AUTO_UPDATE=0\n')
+            try:
+                return subprocess.run([str(ROOT / 'image/files/manage-native-node.sh'), str(self.config), 'tick'],
+                                      env=self.environment, capture_output=True, text=True, timeout=20)
+            finally:
+                self.config.write_text(original)
+
+        for store in ('github:FortisNet/node-os', 'github:a/b.c_d-e', 'flat:https://example.org/downloads',
+                      'https://example.org/store'):
+            with self.subTest(accepted=store):
+                self.assertEqual(configured(store).returncode, 0)
+                # Shown as it was written.
+                self.assertEqual(self.node_report()['host']['store'], store)
+        for store in ('github:FortisNet', 'github:/node-os', 'github:FortisNet/', 'github:-a/b', 'github:a-/b',
+                      'github:a--b/c', 'github:a/b/c', 'github:a/..', 'github:a b/c', 'github:a/b?x', 'github:' + 'a' * 40 + '/b',
+                      'flat:http://example.org/x', 'flat:example.org', 'http://example.org', 'https://example.org/',
+                      'https://user:secret@example.org/store', 'https://example.org/store?token=secret', 'gitlab:a/b'):
+            with self.subTest(refused=store):
+                result = configured(store)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('invalid release store settings', result.stderr)
+
+    def test_release_that_failed_to_install_is_not_tried_again(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        (self.path / 'fail-target').write_text('releases/two')
+        self.run_action('tick')
+        # Undone by the update itself: the release before runs again.
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertTrue(self.node_running())
+        report = self.node_report()
+        self.assertEqual((report['update']['state'], report['update']['candidate']), ('failed', None))
+        self.assertIn('Installing release two did not work and was undone', report['update']['message'])
+        self.assertEqual(report['skipped'], [{'version': 'two', 'reason':
+                                              'did not install on this host and is not tried again automatically'}])
+        self.assertEqual(report['history'][0]['version'], 'two')
+        self.assertEqual(report['history'][0]['result'], 'rolled-back')
+        self.assertEqual(len(self.downloads()), 1)
+        # Whatever made it fail is gone, and the time for the next check has come.
+        (self.path / 'fail-target').unlink()
+        for _ in range(2):
+            self.change_plan(next_check_ms=0)
+            self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(len(self.downloads()), 1)
+        self.assertEqual(self.node_report()['update']['state'], 'idle')
+        self.assertIn('A newer release, two, was not installed: it did not install on this host',
+                      self.published('index.html'))
+        # A release published after it is installed as usual.
+        self.publish(self.package('three'))
+        self.change_plan(next_check_ms=0)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/three')
+
+    def test_release_an_operator_saw_fail_is_not_installed_automatically(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        two = self.package('two')
+        (self.path / 'fail-target').write_text('releases/two')
+        self.run_action('update', two, success=False)   # by hand: undone and set aside
+        (self.path / 'fail-target').unlink()
+        self.publish(two)
+        for _ in range(2):
+            self.change_plan(next_check_ms=0) if (self.root / 'update.plan').exists() else None
+            self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertTrue(self.node_running())
+        self.assertEqual(len(self.downloads()), 1)
+        self.assertEqual(self.node_report()['skipped'][0]['version'], 'two')
+
+    def test_install_that_a_dying_process_left_unfinished_is_not_tried_again(self):
+        self.release_store(automatic=True, delay=3600)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        self.run_action('tick')
+        self.assertEqual(self.node_report()['update']['state'], 'waiting')
+        # As a supervisor that lost power in the middle of installing would leave it.
+        self.change_plan(state='installing')
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        update = self.node_report()['update']
+        self.assertEqual((update['state'], update['candidate']), ('failed', None))
+        self.assertIn('was interrupted', update['message'])
+        self.change_plan(next_check_ms=0)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(self.downloads(), [])
+
+    def test_unreachable_store_is_asked_again_and_changes_nothing(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        state = self.keeper('state')
+        self.store.close()
+        self.run_action('tick')
+        self.assertEqual(self.keeper('state'), state)
+        self.assertEqual(self.selected(), 'releases/one')
+        report = self.node_report()
+        self.assertEqual(report['update']['state'], 'failed')
+        self.assertIn('The release store could not be checked', report['update']['message'])
+        self.assertIsNone(report['update']['lastCheckMs'])
+        # Asked again one interval later, not at every tick.
+        self.assertGreater(report['update']['nextCheckMs'], time.time() * 1000 + 3000 * 1000)
+        # Not a fault of this host: it serves, and says so.
+        health = self.health()
+        self.assertEqual((health['status'], health['healthy']), (200, True))
+        releases = next(check for check in health['orchestrator']['checks'] if check['name'] == 'Releases')
+        self.assertEqual(releases['state'], 'healthy')
+        self.assertIn('has not answered yet', releases['detail'])
+
+    def test_stopped_node_is_not_started_by_an_automatic_install(self):
+        self.release_store(automatic=True)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'))
+        self.run_action('stop')
+        self.assertFalse(self.node_running())
+        self.store.requests.clear()
+        # The supervisor starts a stopped node at its next tick, as it always
+        # did, with the release it had: the updater does not run in that tick.
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(self.store.requests, [])
+        self.assertFalse((self.root / 'update.plan').exists())
+        # A candidate that is already due is not installed into a stopped node either.
+        self.run_action('stop')
+        past = int(time.time() * 1000) - 1000
+        (self.root / 'update.plan').write_text(
+            f'state=waiting\nmessage=Found release two.\nlast_check_ms={past}\nnext_check_ms={past}\ncandidate=two\n'
+            f'candidate_manifest={hashlib.sha256((self.path / "upload-two/manifest").read_bytes()).hexdigest()}\n'
+            f'candidate_bytes=256\ncandidate_interface=1\ninstall_at_ms={past}\n')
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(self.downloads(), [])
+        # While it runs, the update goes ahead.
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+
+    def test_flat_store_layout_and_versions_with_a_node_prefix(self):
+        self.release_store(automatic=True, layout='flat')
+        self.assertEqual(sorted(path.name for path in self.store_folder.iterdir()), ['node-channel-stable', 'node-one'])
+        self.run_action('update', self.release)
+        self.publish(self.package('node-9ed7c09016ee'))
+        self.assertTrue((self.store_folder / f'node-9ed7c09016ee/fortis-node-{ARCHITECTURE}.manifest.sig').is_file())
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/node-9ed7c09016ee')
+        asked = [path for path, _ in self.store.requests]
+        for path in (f'/node-channel-stable/index-{ARCHITECTURE}', f'/node-channel-stable/index-{ARCHITECTURE}.sig',
+                     f'/node-9ed7c09016ee/fortis-node-{ARCHITECTURE}', f'/node-9ed7c09016ee/fortis-node-{ARCHITECTURE}.manifest',
+                     f'/node-9ed7c09016ee/fortis-node-{ARCHITECTURE}.manifest.sig'):
+            self.assertIn(path, asked)
+        self.assertEqual(self.node_report()['host']['store'], 'flat:' + self.store.url)
+        # The operator's commands read the same layout; a list for another
+        # channel lives in another folder and is simply not this host's.
+        self.publish(self.package('1.2.3'))
+        self.publish(self.package('edge-only'), channel='edge')
+        listing = self.run_action('releases').stdout
+        self.assertIn('1.2.3', listing)
+        self.assertNotIn('edge-only', listing)
+        self.run_action('fetch', '1.2.3')
+        self.assertIn((f'/node-1.2.3/fortis-node-{ARCHITECTURE}', 'bytes=0-255'), self.store.requests)
+        self.run_action('update', '1.2.3')
+        self.assertEqual(self.selected(), 'releases/1.2.3')
+
+    def second_store(self):
+        """The same files on another port: where a redirect to another host leads."""
+        other = Store(self.store_folder, self.store_certificate, self.store_key)
+        self.addCleanup(other.close)
+        return other
+
+    def test_redirects_are_followed_for_the_list_and_for_ranged_downloads(self):
+        self.release_store()
+        large = self.package('large', padding=5 * 1024 * 1024 + 123)
+        self.publish(large)
+        other = self.second_store()
+        tree = f'/{ARCHITECTURE}'
+        # A whole address on another host, a path on the same host, and one
+        # relative to the folder of the file that answered.
+        self.store.redirects[f'{tree}/index'] = (302, f'{other.url}{tree}/index')
+        self.store.redirects[f'{tree}/index.sig'] = (301, '/elsewhere/signature')
+        self.store.redirects['/elsewhere/signature'] = (307, f'../{ARCHITECTURE}/releases/../index.sig')
+        self.store.redirects[f'{tree}/releases/large/manifest'] = (303, 'manifest.sig/../manifest')
+        self.store.redirects[f'{tree}/releases/large/fortis-node'] = (308, f'{other.url}{tree}/releases/large/fortis-node')
+        self.assertIn('Release index 2, 2 release(s)', self.run_action('releases').stdout)
+        self.assertIn((f'{tree}/index', None), other.requests)
+        self.run_action('fetch', 'large')
+        self.assertEqual((self.root / 'staged/large/fortis-node').read_bytes(), (large / 'fortis-node').read_bytes())
+        ranges = ['bytes=0-2097151', 'bytes=2097152-4194303', 'bytes=4194304-5243258']
+        # Every range is asked of the store, which redirects it, and then of where it leads.
+        for store in (self.store, other):
+            self.assertEqual([header for path, header in store.requests if path == f'{tree}/releases/large/fortis-node'],
+                             ranges)
+
+    def test_redirects_to_http_or_without_end_are_refused(self):
+        self.release_store()
+        index = f'/{ARCHITECTURE}/index'
+        self.store.redirects[index] = (302, f'http://127.0.0.1:{self.free_port()}{index}')
+        self.assertIn('redirects to an address that is not https', self.run_action('releases', success=False).stderr)
+        self.store.redirects[index] = (302, f'ftp://127.0.0.1{index}')
+        self.assertIn('not https', self.run_action('releases', success=False).stderr)
+        self.store.redirects[index] = (302, '')
+        self.run_action('releases', success=False)
+        # Five redirects for one file are followed; a sixth is not.
+        self.store.redirects[index] = (302, '/hop/1')
+        for hop in range(1, 5):
+            self.store.redirects[f'/hop/{hop}'] = (302, f'/hop/{hop + 1}')
+        (self.store_folder / 'hop').mkdir()
+        shutil.copyfile(self.store_tree / 'index', self.store_folder / 'hop/5')
+        self.assertIn('Release index 1', self.run_action('releases').stdout)
+        self.store.redirects['/hop/5'] = (302, index + '?again')
+        self.assertIn('redirects too many times', self.run_action('releases', success=False).stderr)
+        # A status that is not a redirect to follow is not followed.
+        self.store.redirects[index] = (300, '/hop/5')
+        self.assertIn('does not have a requested file', self.run_action('releases', success=False).stderr)
+        self.assertEqual(self.staged(), [])
+
+    def test_format_one_release_list_still_works(self):
+        self.release_store(automatic=True, index_format=1)
+        self.run_action('update', self.release)
+        self.publish(self.package('two'), index_format=1)
+        self.assertTrue((self.store_tree / 'index').read_text().startswith('format=1\nsequence=2\npublished_ms='))
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+        self.assertEqual(self.node_report()['skipped'], [])
+        # The publishing tool carries a format 1 list over into format 2.
+        self.publish(self.package('three'))
+        lines = (self.store_tree / 'index').read_text().splitlines()
+        self.assertEqual((lines[0], lines[1], lines[4]), ('format=2', 'sequence=3', 'channel=stable'))
+        self.assertTrue(all(line.endswith('\t1') for line in lines[5:]))
+        self.change_plan(next_check_ms=0)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/three')
+
+    def new_host_with_store(self, *releases, reachable=True, **settings):
+        """A new host whose image names a release store holding `releases`."""
+        host = self.new_host(**settings)
+        self.store_folder, self.store_layout = self.path / 'store', 'tree'
+        self.store_folder.mkdir()
+        for release in releases:
+            self.publish(release)
+        self.store = Store(self.store_folder, self.server_certificate, self.server_key)
+        self.addCleanup(self.store.close)
+        if not reachable:
+            self.store.close()
+        with (host / 'etc/fortis/first-boot.conf').open('a') as file:
+            file.write(f'FORTIS_NATIVE_RELEASE_STORE={self.store.url}\nFORTIS_NATIVE_RELEASE_STORE_LOOPBACK=1\n')
+        self.first_boot(host)
+        return host
+
+    def test_first_start_installs_the_newest_release_from_the_store(self):
+        # The wait before an install is for running hosts; a first start does not wait.
+        self.new_host_with_store(self.release, self.package('two'), FORTIS_NATIVE_UPDATE_DELAY_SECONDS='3600')
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/two')
+        self.assertTrue(self.node_running())
+        # The release in the image was never installed.
+        self.assertEqual(sorted(path.name for path in (self.root / 'app/releases').iterdir()), ['two'])
+        report = self.node_report()
+        self.assertEqual((report['running']['version'], report['update']['state']), ('two', 'idle'))
+        self.assertEqual(self.health()['status'], 200)
+        self.assertNotIn('Setup', [check['name'] for check in self.health()['orchestrator']['checks']])
+
+    def test_first_start_installs_the_release_in_the_image_when_the_store_is_silent(self):
+        self.new_host_with_store(self.release, self.package('two'), reachable=False)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertTrue(self.node_running())
+        report = self.node_report()
+        self.assertEqual((report['running']['version'], report['update']['state']), ('one', 'failed'))
+        self.assertIn('The release store could not be checked', report['update']['message'])
+        self.assertEqual(self.health()['status'], 200)
+        self.assertNotIn('Setup', [check['name'] for check in self.health()['orchestrator']['checks']])
+
+    def test_first_start_downloads_nothing_when_the_image_has_the_newest_release(self):
+        self.new_host_with_store(self.release)
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertEqual(self.downloads(), [])
+        self.assertEqual(self.node_report()['update']['state'], 'idle')
+
+    def test_first_start_falls_back_to_the_image_when_the_store_release_does_not_hold(self):
+        self.new_host_with_store(self.release, self.package('two'))
+        (self.path / 'fail-target').write_text('releases/two')
+        self.run_action('tick')
+        self.assertEqual(self.selected(), 'releases/one')
+        self.assertTrue(self.node_running())
+        self.assertEqual(self.node_report()['skipped'][0]['version'], 'two')
 
     def new_host(self, **settings):
         """An image's contents under a scratch folder, and the host configured from them."""
@@ -1212,6 +1762,7 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         (pages / 'index.html').write_text(first_page)
         (pages / 'health.html').write_text('<!DOCTYPE html><title>health</title>')
         (pages / 'health.json').write_text('{"status":200}\n')
+        (pages / 'node.json').write_text('{"schemaVersion":1}\n')
         (pages / 'health.status').write_text(f'200 {int(time.time() * 1000)}\n')
         server = subprocess.Popen([str(ROOT / 'image/files/manage-native-node.sh'), str(challenges), 'page-server',
                                    str(pages)],
@@ -1241,9 +1792,12 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         self.assertEqual(get('/', 'HEAD'), (200, ''))
         self.assertEqual(get('/health'), (200, '<!DOCTYPE html><title>health</title>'))
         self.assertEqual(get('/health.json'), (200, '{"status":200}\n'))
+        self.assertEqual(get('/node.json'), (200, '{"schemaVersion":1}\n'))
         (pages / 'health.status').write_text(f'503 {int(time.time() * 1000)}\n')
         self.assertEqual(get('/health')[0], 503)
         self.assertEqual(get('/health.json'), (503, '{"status":200}\n'))
+        # What runs here is a description, not a verdict: 200 whatever the health.
+        self.assertEqual(get('/node.json')[0], 200)
         # A healthy report that nobody refreshed for two minutes is not believed.
         (pages / 'health.status').write_text(f'200 {int(time.time() * 1000) - 120000}\n')
         self.assertEqual(get('/health')[0], 503)

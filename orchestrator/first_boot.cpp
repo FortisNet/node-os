@@ -120,6 +120,11 @@ bool FirstBoot(const fs::path& config, const fs::path& prefix) {
                                           {"FORTIS_NATIVE_ACME_CHALLENGES", (var / "challenges").string()},
                                           {"FORTIS_NATIVE_ACME_STATE", (var / "acme").string()},
                                           {"FORTIS_NATIVE_FETCH_STATE", (var / "fetch").string()},
+                                          // No release store is named here, so nothing is fetched until one is
+                                          // set. These two say what the host does once it is: follow the stable
+                                          // list and install from it by itself.
+                                          {"FORTIS_NATIVE_CHANNEL", "stable"},
+                                          {"FORTIS_NATIVE_AUTO_UPDATE", "1"},
                                           // The database is on the machine's own disk in this stage, so there is
                                           // no separate mount to insist on.
                                           {"FORTIS_NATIVE_REQUIRE_MOUNT", "0"},

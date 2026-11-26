@@ -7,6 +7,7 @@
 #include "pages.h"
 #include "release_fetch.h"
 #include "release_ledger.h"
+#include "update_plan.h"
 #include <fstream>
 #include <iostream>
 #include <grp.h>
@@ -28,6 +29,7 @@ struct Release {
   std::string version, digest, source;
   uint64_t bytes = 0;
   bool metadata = false;
+  unsigned host_interface = 1;  // what the release needs from its host
 };
 struct Settings {
   std::map<std::string, std::string> values, environment;
@@ -37,7 +39,15 @@ struct Settings {
   // shows a private one. Empty when switched off.
   std::vector<std::string> address_lookup;
   bool require_clock = false;
-  std::string store;
+  // The release store as configured (shown on the host's pages), the https
+  // address that spelling stands for, and how the store is laid out.
+  std::string store, store_url;
+  bool store_flat = false;
+  // The release list this host follows, and whether and how it installs
+  // from it by itself.
+  std::string channel = "stable";
+  bool auto_update = true;
+  unsigned update_check_seconds = 3600, update_delay_seconds = 300;
   unsigned fetch_user = 10004;
   bool store_loopback = false;
   std::string name, domain, address, ca, acme_directory, acme_contact;
@@ -77,6 +87,52 @@ bool Within(const fs::path& child, const fs::path& parent) {
   for (; p != parent.end(); ++p, ++c)
     if (c == child.end() || *p != *c) return false;
   return true;
+}
+/** FORTIS_NATIVE_RELEASE_STORE has three spellings:
+ *
+ *   https://host/path            a tree of files
+ *   flat:https://host/prefix     the flat layout
+ *   github:OWNER/REPO            the flat downloads of that repository's
+ *                                releases on GitHub
+ *
+ * Sets `store_url` and `store_flat` from `store`. The address is shown on
+ * the host's pages, so nothing that could carry a password is accepted in
+ * it: no user part, no query. */
+void ConfigureStore(Settings& c) {
+  if (c.store.empty()) return;
+  constexpr const char* refusal = "invalid release store settings";
+  std::string_view address = c.store;
+  constexpr std::string_view github = "github:", flat = "flat:";
+  if (address.starts_with(github)) {
+    const auto name = address.substr(github.size());
+    const auto slash = name.find('/');
+    Require(slash != std::string_view::npos, refusal);
+    const auto owner = name.substr(0, slash), repository = name.substr(slash + 1);
+    const auto spelled = [](std::string_view text, std::string_view punctuation) {
+      return std::all_of(text.begin(), text.end(), [punctuation](char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               punctuation.find(ch) != std::string_view::npos;
+      });
+    };
+    // GitHub's own rules for the name of an account and of a repository.
+    Require(!owner.empty() && owner.size() <= 39 && spelled(owner, "-") && owner.front() != '-' &&
+                owner.back() != '-' && owner.find("--") == std::string_view::npos && !repository.empty() &&
+                repository.size() <= 100 && spelled(repository, "-_.") && repository != "." && repository != "..",
+            refusal);
+    c.store_url = "https://github.com/" + std::string(owner) + "/" + std::string(repository) + "/releases/download";
+    c.store_flat = true;
+    return;
+  }
+  c.store_flat = address.starts_with(flat);
+  if (c.store_flat) address.remove_prefix(flat.size());
+  Require(address.starts_with("https://") && address.back() != '/' && address.size() <= 1000 &&
+              std::all_of(address.begin(), address.end(),
+                          [](char ch) {
+                            return ch > ' ' && ch <= '~' &&
+                                   std::string_view("@?#\"<>\\").find(ch) == std::string_view::npos;
+                          }),
+          refusal);
+  c.store_url = std::string(address);
 }
 Settings Configure(const fs::path& path, bool stopping) {
   PrivateFile(path);
@@ -133,9 +189,20 @@ Settings Configure(const fs::path& path, bool stopping) {
   SafePath(c.fetch_state);
   c.fetch_user = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_FETCH_USER", "10004"), 65534));
   c.store_loopback = Integer(c.Value("FORTIS_NATIVE_RELEASE_STORE_LOOPBACK", "0"), 1) != 0;
-  Require(c.fetch_user >= 1000 && c.fetch_user != 10001 &&
-              (c.store.empty() || (c.store.starts_with("https://") && c.store.back() != '/' && c.store.size() <= 1000)),
-          "invalid release store settings");
+  Require(c.fetch_user >= 1000 && c.fetch_user != 10001, "invalid release store settings");
+  ConfigureStore(c);
+  // Which release list the host follows. Format 2 lists name their channel,
+  // and a list for another channel is refused.
+  c.channel = c.Value("FORTIS_NATIVE_CHANNEL", "stable");
+  Require(KnownChannel(c.channel), "invalid release channel (FORTIS_NATIVE_CHANNEL)");
+  // With a store, the host installs the newest release it can run by itself:
+  // it looks every `update_check_seconds`, and waits a random time of at most
+  // `update_delay_seconds` before installing, so that hosts do not all
+  // download and restart in the same minute.
+  c.auto_update = Integer(c.Value("FORTIS_NATIVE_AUTO_UPDATE", "1"), 1) != 0;
+  c.update_check_seconds = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_UPDATE_CHECK_SECONDS", "3600"), 86400));
+  c.update_delay_seconds = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_UPDATE_DELAY_SECONDS", "300"), 3600));
+  Require(c.update_check_seconds >= 30, "invalid automatic update settings");
   c.port = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_PORT", "8080"), 65535));
   const auto forwarded = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_HEALTH_HOST_PORT", "0"), 65535));
   Require(c.port && forwarded != c.port, "invalid health forwarding");
@@ -394,16 +461,27 @@ Release Verify(const Settings& c, const fs::path& directory) {
   const auto manifest = Read(directory / "manifest", 1024);
   Require(Signed(c, manifest, Read(directory / "manifest.sig", 16384)), "release signature verification failed");
   const auto fields = KeyValues(manifest);
-  Require(fields.size() == 7 || fields.size() == 9, "manifest field count mismatch");
+  // `host_interface` is the one optional field: a manifest without it was
+  // built against interface 1.
+  const bool names_interface = fields.contains("host_interface");
+  const size_t fixed_fields = fields.size() - (names_interface ? 1 : 0);
+  Require(fixed_fields == 7 || fixed_fields == 9, "manifest field count mismatch");
   const auto get = [&](const char* name) -> std::string {
     const auto it = fields.find(name);
     Require(it != fields.end(), "manifest field absent");
     return it->second;
   };
   const auto format = get("format");
-  Require((format == "1" && fields.size() == 7) || (format == "2" && fields.size() == 9),
-          "unsupported release manifest");
+  Require((format == "1" && fixed_fields == 7) || (format == "2" && fixed_fields == 9), "unsupported release manifest");
   Release release{get("version"), get("sha256"), "", Integer(get("bytes"), 134217728)};
+  if (names_interface) {
+    release.host_interface = static_cast<unsigned>(Integer(get("host_interface"), kHostInterfaceLimit));
+    Require(release.host_interface >= 1, "invalid host interface in release manifest");
+  }
+  // Refused here, so no way of handing a release to this host gets around
+  // it: not the store, not a folder given to `update`.
+  if (!HostInterfaceOffered(release.host_interface))
+    throw std::runtime_error("this release " + InterfaceRefusal(release.host_interface));
   if (get("architecture") != kArchitecture)
     throw std::runtime_error("this release is built for another processor architecture; this host is " +
                              std::string(kArchitecture));
@@ -535,9 +613,33 @@ class Controller final {
   std::string waiting_for_;
   void PublishHealth(std::string_view state = {});
   void ShowPagesWhileStopped();
-  ReleaseIndex CheckReleases();
+  ReleaseIndex CheckReleases(unsigned timeout = 150, bool keep_pages_fresh = false);
+  void DownloadCandidate(const ReleaseIndexEntry& entry, unsigned timeout, bool keep_pages_fresh);
+  fs::path AdmitDownload(const ReleaseIndexEntry& entry);
   fs::path FetchRelease(const std::string& version);
   void ListReleases();
+  // Automatic updates: the host installs the newest release it can run from
+  // the store by itself. Off without a store.
+  bool AutomaticUpdates() const { return c_.auto_update && !c_.store.empty(); }
+  fs::path PlanFile() const { return c_.root / "update.plan"; }
+  fs::path AcceptedIndex() const;
+  fs::path FailureMark(const std::string& manifest_sha256) const;
+  void RememberFailure(const std::string& manifest_sha256, const std::string& version);
+  void Announce(UpdatePlan& plan, std::string_view state, std::string message);
+  void SettleInterruptedStep(UpdatePlan& plan);
+  std::optional<ReleaseIndexEntry> NewestToInstall(unsigned timeout);
+  bool InstallCandidate(UpdatePlan& plan, const ReleaseIndexEntry& entry, unsigned download_timeout);
+  void AutomaticUpdate();
+  bool InstallNewestFromStore(const Release& baked);
+  uint64_t DownloadedSoFar(const UpdatePlan& plan) const;
+  UpdateFacts UpdateReport(const std::string& selected) const;
+  std::vector<ReleaseEvent> History() const;
+  std::function<void()> KeepPagesFresh(bool wanted) {
+    return wanted ? std::function<void()>([this] { PublishHealth(); }) : std::function<void()>();
+  }
+  // True during the first install: what the updater announces is then also
+  // what the first page says the host is waiting for.
+  bool announce_as_setup_ = false;
   fs::path CopyDatabase(const std::string& label);
   FileDescriptor LockDatabase() const;
   void Backup();
@@ -688,6 +790,8 @@ HostFacts Controller::Facts(std::string_view state) {
       const auto fields = KeyValues(Read(c_.root / "app" / selected / "manifest", 1024));
       facts.node_version = fields.at("version");
       facts.node_sha256 = fields.at("sha256");
+      if (const auto needed = fields.find("host_interface"); needed != fields.end())
+        facts.node_host_interface = static_cast<unsigned>(Integer(needed->second, kHostInterfaceLimit));
     } catch (const std::exception&) { facts.node_version = "unreadable"; }
   }
   facts.runs_in = HostKind();
@@ -719,16 +823,37 @@ HostFacts Controller::Facts(std::string_view state) {
     facts.orchestrator.push_back(std::move(certificate));
   }
   facts.store_configured = !c_.store.empty();
+  facts.store = c_.store;
+  facts.channel = c_.channel;
+  facts.automatic_updates = AutomaticUpdates();
+  facts.update = UpdateReport(selected);
+  // Both are extras: a ledger that cannot be read leaves them out and the
+  // pages are written all the same.
+  try {
+    if (running && ledger_->Head().active) {
+      const auto serving = ledger_->Load(ledger_->Head().active);
+      facts.node_since_ms = serving.started ? serving.started : serving.ready;
+    }
+    facts.history = History();
+  } catch (const std::exception&) { facts.history.clear(); }
   if (facts.store_configured) {
-    HealthCheck releases{"Releases", "The release store has not been checked yet.", Health::kWaiting};
+    // A host that updates itself keeps asking the store by itself, so a
+    // store that does not answer is said here but is no fault of this host.
+    // Without automatic updates nobody asks unless the operator does, and a
+    // list that old is worth their attention, as before.
+    const auto unanswered = facts.automatic_updates ? Health::kHealthy : Health::kWaiting;
+    HealthCheck releases{"Releases",
+                         facts.automatic_updates ? "The release store has not answered yet. This host keeps asking."
+                                                 : "The release store has not been checked yet.",
+                         unanswered};
     try {
       const auto checked = Integer(std::string_view(Read(c_.root / "releases.checked", 32)).substr(0, 13));
       const bool recent = facts.generated_ms < checked + 48ULL * 3600 * 1000;
       releases.detail = "Last checked " + PageDate(checked) + (recent ? "." : ": more than two days ago.");
-      releases.state = recent ? Health::kHealthy : Health::kWaiting;
-      const auto index = ParseReleaseIndex(Read(c_.root / "releases.index", 256 * 1024));
+      releases.state = recent ? Health::kHealthy : unanswered;
+      const auto index = ParseReleaseIndex(Read(AcceptedIndex(), 256 * 1024));
       if (!index.releases.empty()) facts.newest_release = index.releases.back().version;
-    } catch (const std::exception&) { releases.state = Health::kWaiting; }
+    } catch (const std::exception&) { releases.state = unanswered; }
     facts.orchestrator.push_back(std::move(releases));
   }
   if (fs::is_directory(c_.root / "staged"))
@@ -845,6 +970,13 @@ void Controller::InstallBakedRelease() {
       return;
     }
   }
+  // A newer release than the one in the image, when the store has one this
+  // host can run. Whatever goes wrong with it, the release in the image is
+  // still there to install.
+  if (InstallNewestFromStore(release)) {
+    waiting_for_.clear();
+    return;
+  }
   waiting_for_ = "Installing the node.";
   PublishHealth();
   try {
@@ -857,10 +989,24 @@ void Controller::InstallBakedRelease() {
     ShowPagesWhileStopped();
   }
 }
+/** What the unprivileged process needs to make requests: `base_url` is
+ * left empty for requests that are not to the release store. */
+StoreSettings HttpsClient(const Settings& c) {
+  StoreSettings client;
+  client.ca_file = c.ca;
+  client.user_agent = "FortisNet-Orchestrator/1";
+  client.allow_loopback = c.store_loopback;
+  return client;
+}
 StoreSettings Store(const Settings& c) {
   Require(!c.store.empty(), "no release store is configured (FORTIS_NATIVE_RELEASE_STORE)");
-  // A store holds one tree per processor architecture; a host reads its own.
-  return {c.store + "/" + std::string(kArchitecture), c.ca, "FortisNet-Orchestrator/1", c.store_loopback};
+  auto store = HttpsClient(c);
+  store.layout = c.store_flat ? StoreLayout::kFlat : StoreLayout::kTree;
+  // A tree store holds one tree per processor architecture and a host reads
+  // its own; a flat store names the architecture in every file instead.
+  store.base_url = c.store_flat ? c.store_url : c.store_url + "/" + std::string(kArchitecture);
+  store.channel = c.channel;
+  return store;
 }
 void Controller::PrepareFetchFolders() {
   Directory(c_.fetch_state, 0700);
@@ -944,7 +1090,7 @@ int FetchWorker(const Settings& c, const std::string& what) {
   }
   const auto staging = c.fetch_state / "staging";
   if (what == "address") {
-    DownloadAddressAnswers({"", c.ca, "FortisNet-Orchestrator/1", c.store_loopback}, c.address_lookup, staging);
+    DownloadAddressAnswers(HttpsClient(c), c.address_lookup, staging);
     return 0;
   }
   const auto store = Store(c);
@@ -957,15 +1103,26 @@ int FetchWorker(const Settings& c, const std::string& what) {
   DownloadRelease(store, staging, what.substr(0, colon), Integer(std::string_view(what).substr(colon + 1)));
   return 0;
 }
+/** The last release list this host accepted. Each channel has its own
+ * lists with their own sequence numbers, so each has its own file here: a
+ * host moved to another channel starts that channel's count afresh, and
+ * moving back cannot be answered with an earlier list of the first. */
+fs::path Controller::AcceptedIndex() const {
+  return c_.root / (c_.channel == "stable" ? "releases.index" : "releases.index-" + c_.channel);
+}
 /** Download the release index and accept it only when it is signed by a key
- * this host trusts and is not older than one already accepted. An index with
- * the sequence already seen must be byte-for-byte the one seen. The accepted
- * index is kept, so a later check cannot be answered with an earlier list. */
-ReleaseIndex Controller::CheckReleases() {
+ * this host trusts, is for this host's channel, has not expired and is not
+ * older than one already accepted. An index with the sequence already seen
+ * must be byte-for-byte the one seen. The accepted index is kept, so a later
+ * check cannot be answered with an earlier list. `timeout` bounds the
+ * download in seconds; with `keep_pages_fresh` the pages are rewritten while
+ * it runs. */
+ReleaseIndex Controller::CheckReleases(unsigned timeout, bool keep_pages_fresh) {
   // Say that no store is configured before anything is created for one.
   (void)Store(c_);
   PrepareFetchFolders();
-  const auto worker = Command({self_path, c_.config.string(), "fetch-worker", "index"}, 150, 16 * 1024);
+  const auto worker = Command({self_path, c_.config.string(), "fetch-worker", "index"}, timeout, 16 * 1024,
+                              KeepPagesFresh(keep_pages_fresh));
   if (worker.exit != 0)
     throw std::runtime_error(worker.output.empty() ? "release index download failed" : worker.output);
   // Nothing the unprivileged process fetched is trusted before these checks.
@@ -973,7 +1130,13 @@ ReleaseIndex Controller::CheckReleases() {
   Require(Signed(c_, text, Read(c_.fetch_state / "staging/index.sig", 16384)),
           "release index signature verification failed");
   const auto index = ParseReleaseIndex(text);
-  const auto accepted = c_.root / "releases.index";
+  // A format 2 list says which channel it is for and until when it may be
+  // used. The expiry is what stops a store from serving one old, validly
+  // signed list for ever and so hiding every later release.
+  Require(index.channel.empty() || index.channel == c_.channel,
+          "the release list is for another channel than this host follows");
+  Require(index.expires_ms == 0 || NowMs() < index.expires_ms, "the release list has expired");
+  const auto accepted = AcceptedIndex();
   if (fs::exists(accepted)) {
     const auto previous_text = Read(accepted, 256 * 1024);
     const auto previous = ParseReleaseIndex(previous_text);
@@ -993,35 +1156,39 @@ void Controller::ListReleases() {
   for (const auto& entry : index.releases) {
     const bool staged = fs::is_directory(c_.root / "staged" / entry.version);
     std::cout << "  " << entry.version << (current == "releases/" + entry.version ? "  (running)" : "")
-              << (staged ? "  (staged)" : "") << '\n';
+              << (staged ? "  (staged)" : "")
+              << (HostInterfaceOffered(entry.host_interface) ? ""
+                                                             : "  (" + InterfaceRefusal(entry.host_interface) + ")")
+              << '\n';
   }
 }
-/** `fetch VERSION`: download one release named by the accepted index and
- * stage it. The download is copied into the administrator's own folder
- * before it is verified, so what was verified cannot be swapped afterwards;
- * anything that fails is discarded. Staging does not install: the operator
- * runs `update VERSION`. Returns the staged folder. */
-fs::path Controller::FetchRelease(const std::string& version) {
-  Require(Token(version), "invalid release version");
-  const auto index = CheckReleases();
-  const auto* entry = index.Find(version);
-  Require(entry != nullptr, "the release index does not list that version");
-  const auto worker = Command(
-      {self_path, c_.config.string(), "fetch-worker", version + ":" + std::to_string(entry->bytes)}, 900, 16 * 1024);
+/** Have the unprivileged process download one release the accepted list
+ * names, into its own staging folder. Nothing of it is trusted yet. */
+void Controller::DownloadCandidate(const ReleaseIndexEntry& entry, unsigned timeout, bool keep_pages_fresh) {
+  const auto worker =
+      Command({self_path, c_.config.string(), "fetch-worker", entry.version + ":" + std::to_string(entry.bytes)},
+              timeout, 16 * 1024, KeepPagesFresh(keep_pages_fresh));
   if (worker.exit != 0) throw std::runtime_error(worker.output.empty() ? "release download failed" : worker.output);
-  const auto downloaded = c_.fetch_state / "staging" / version;
+}
+/** Verify what the unprivileged process downloaded and stage it. The
+ * download is copied into the administrator's own folder before it is
+ * verified, so what was verified cannot be swapped afterwards; anything
+ * that fails is discarded. Returns the staged folder. */
+fs::path Controller::AdmitDownload(const ReleaseIndexEntry& entry) {
+  const auto downloaded = c_.fetch_state / "staging" / entry.version;
   Directory(c_.root / "staged", 0700);
-  const auto staged = c_.root / "staged" / version;
+  const auto staged = c_.root / "staged" / entry.version;
   const auto incoming = c_.root / "staged" / (".incoming-" + std::to_string(getpid()));
   fs::remove_all(incoming);
   Directory(incoming, 0700);
   try {
     for (const char* name : {"fortis-node", "manifest", "manifest.sig"})
       CopyFile(downloaded / name, incoming / name, false);
-    Require(DigestBytes(Read(incoming / "manifest", 1024)) == entry->manifest_sha256,
+    Require(DigestBytes(Read(incoming / "manifest", 1024)) == entry.manifest_sha256,
             "the downloaded release is not the one the index names");
     const auto release = Verify(c_, incoming);
-    Require(release.version == version && release.bytes == entry->bytes,
+    Require(release.version == entry.version && release.bytes == entry.bytes &&
+                release.host_interface == entry.host_interface,
             "the downloaded release does not match its index entry");
     SyncDirectory(incoming);
     fs::remove_all(staged);
@@ -1033,8 +1200,303 @@ fs::path Controller::FetchRelease(const std::string& version) {
   }
   std::error_code ignored;
   fs::remove_all(downloaded, ignored);
+  return staged;
+}
+/** `fetch VERSION`: download one release named by the accepted index and
+ * stage it. Staging does not install: the operator runs `update VERSION`.
+ * Returns the staged folder. */
+fs::path Controller::FetchRelease(const std::string& version) {
+  Require(Token(version), "invalid release version");
+  const auto index = CheckReleases();
+  const auto* entry = index.Find(version);
+  Require(entry != nullptr, "the release index does not list that version");
+  // Said before the download rather than after it.
+  if (!HostInterfaceOffered(entry->host_interface))
+    throw std::runtime_error("this release " + InterfaceRefusal(entry->host_interface));
+  DownloadCandidate(*entry, 900, false);
+  const auto staged = AdmitDownload(*entry);
   std::cout << "Staged release " << version << "; install it with: update " << version << '\n';
   return staged;
+}
+/** Marks a release whose install was started on this host and did not
+ * complete. Such a release is not tried again automatically, whatever the
+ * reason was: a host must never fall into installing and rolling back the
+ * same release for ever. An operator can still install it by hand. The
+ * mark is named after the release's manifest hash, as the list names it. */
+fs::path Controller::FailureMark(const std::string& manifest_sha256) const {
+  Require(Hex(manifest_sha256), "invalid release identity");
+  return c_.root / "update-failed" / manifest_sha256;
+}
+void Controller::RememberFailure(const std::string& manifest_sha256, const std::string& version) {
+  Directory(c_.root / "update-failed", 0700);
+  AtomicFile(FailureMark(manifest_sha256), version + "\n");
+}
+/** Record what the updater is doing and show it: the plan is saved first,
+ * so the pages written next (and by anyone later) say the same. */
+void Controller::Announce(UpdatePlan& plan, std::string_view state, std::string message) {
+  plan.state = std::string(state);
+  plan.message = std::move(message);
+  SaveUpdatePlan(PlanFile(), plan);
+  if (announce_as_setup_) waiting_for_ = plan.message;
+  PublishHealth();
+}
+/** A plan left in the middle of a step by a process that ended there.
+ * Looking, downloading and verifying change nothing and are simply done
+ * again. An install that was started is different: either it completed
+ * (the candidate is the selected release) or it did not, and then the
+ * release is not tried again. The interrupted update itself has already
+ * been rolled back by `Recover` before this runs. */
+void Controller::SettleInterruptedStep(UpdatePlan& plan) {
+  if (plan.state == "installing" && !plan.candidate.empty()) {
+    const auto version = plan.candidate;
+    const bool installed = Target(c_.root / "app/current") == "releases/" + version;
+    if (!installed) RememberFailure(plan.candidate_manifest, version);
+    plan.Forget();
+    plan.state = installed ? "idle" : "failed";
+    plan.message = installed
+                       ? "Release " + version + " was installed."
+                       : "Installing release " + version + " was interrupted. It is not tried again automatically.";
+    SaveUpdatePlan(PlanFile(), plan);
+  } else if (plan.state == "looking" || plan.state == "downloading" || plan.state == "verifying") {
+    plan.state = plan.candidate.empty() ? "idle" : "waiting";
+    plan.message = "Continuing after a restart.";
+    SaveUpdatePlan(PlanFile(), plan);
+  }
+}
+/** Ask the store for its list and choose from it. Returns the release to
+ * install: the newest this host can run, unless it is the selected one or
+ * its install did not complete here before. Throws when the store cannot
+ * be reached or its list is refused. */
+std::optional<ReleaseIndexEntry> Controller::NewestToInstall(unsigned timeout) {
+  const auto choice = ChooseRelease(CheckReleases(timeout, true));
+  if (!choice.newest || Target(c_.root / "app/current") == "releases/" + choice.newest->version ||
+      fs::exists(FailureMark(choice.newest->manifest_sha256)))
+    return std::nullopt;
+  return choice.newest;
+}
+/** Download, verify and install one release chosen from the accepted list,
+ * saying at each step what is happening. Returns true when it now runs.
+ * A download or verification that fails changes nothing and is tried again
+ * at the next check. An install that fails has been undone by `Update`, and
+ * the release is then not tried again. */
+bool Controller::InstallCandidate(UpdatePlan& plan, const ReleaseIndexEntry& entry, unsigned download_timeout) {
+  const auto& version = entry.version;
+  // The plan names it from here on, so the pages can, and so a process that
+  // ends during the install leaves behind which release it was installing.
+  if (plan.candidate != version || plan.candidate_manifest != entry.manifest_sha256) plan.Choose(entry, NowMs());
+  fs::path staged;
+  try {
+    Announce(plan, "downloading", "Downloading release " + version + ".");
+    DownloadCandidate(entry, download_timeout, true);
+    Announce(plan, "verifying", "Checking that release " + version + " is signed, complete and made for this host.");
+    staged = AdmitDownload(entry);
+  } catch (const std::exception& error) {
+    if (interrupted) throw;
+    std::cerr << "Release " << version << " not downloaded: " << error.what() << '\n';
+    plan.Forget();
+    Announce(plan, "failed",
+             "Release " + version + " could not be downloaded and checked (" + PublicReason(error.what()) +
+                 "). Nothing was changed; this host will try again.");
+    return false;
+  }
+  Announce(plan, "installing", "Installing release " + version + ". The node restarts once.");
+  bool installed = false;
+  try {
+    // A release set aside after a failed install by hand is not installed
+    // behind the operator's back either. Only now is its hash known: the
+    // list names releases by their manifest.
+    Require(!fs::exists(c_.root / "quarantine" / KeyValues(Read(staged / "manifest", 1024)).at("sha256")),
+            "candidate quarantined: explicit reviewed retry required");
+    Update(staged);
+    installed = true;
+  } catch (const std::exception& error) {
+    std::cerr << "Release " << version << " not installed: " << error.what() << '\n';
+    RememberFailure(entry.manifest_sha256, version);
+    if (interrupted) {
+      plan.Forget();
+      plan.state = "failed";
+      plan.message = "Installing release " + version + " was interrupted. It is not tried again automatically.";
+      SaveUpdatePlan(PlanFile(), plan);
+      throw;
+    }
+  }
+  // Installed releases live under app/releases; the staged copy is done with.
+  std::error_code ignored;
+  fs::remove_all(staged, ignored);
+  plan.Forget();
+  if (installed) Announce(plan, "idle", "Release " + version + " was installed.");
+  else
+    Announce(plan, "failed",
+             "Installing release " + version + " did not work and was undone. It is not tried again automatically.");
+  return installed;
+}
+/** One step of automatic updates, from the supervisor's tick while the node
+ * runs. When the time for a check has come: ask the store, choose, and
+ * either remember the choice with a time to install it, or, when that time
+ * has come, install it. The wait before installing is random, at most the
+ * configured delay, and is chosen once for a release: the plan keeps it
+ * across restarts. A store that does not answer is asked again one interval
+ * later; the running node is not touched because of it.
+ *
+ * This runs only while the node runs. A node that is stopped is started by
+ * the supervisor as it always was, with the release it had: an install never
+ * is what starts a node somebody stopped. */
+void Controller::AutomaticUpdate() {
+  if (!AutomaticUpdates()) return;
+  auto plan = LoadUpdatePlan(PlanFile());
+  SettleInterruptedStep(plan);
+  const uint64_t interval_ms = c_.update_check_seconds * 1000ULL, delay_ms = c_.update_delay_seconds * 1000ULL;
+  // Times further ahead than the settings allow come from a clock that was
+  // set back, or from settings that were shortened: do not wait them out.
+  if (plan.next_check_ms > NowMs() + interval_ms) plan.next_check_ms = 0;
+  if (plan.install_at_ms > NowMs() + delay_ms) plan.install_at_ms = NowMs() + delay_ms;
+  if (NowMs() < plan.next_check_ms) return;
+  std::optional<ReleaseIndexEntry> found;
+  Announce(plan, "looking", "Looking for a newer node release.");
+  try {
+    found = NewestToInstall(60);
+  } catch (const std::exception& error) {
+    if (interrupted) throw;
+    std::cerr << "Release store not checked: " << error.what() << '\n';
+    plan.next_check_ms = NowMs() + interval_ms;
+    Announce(plan, "failed",
+             "The release store could not be checked (" + PublicReason(error.what()) +
+                 "). Nothing was changed; this host will ask again.");
+    return;
+  }
+  plan.last_check_ms = NowMs();
+  plan.next_check_ms = plan.last_check_ms + interval_ms;
+  if (!found) {
+    plan.Forget();
+    Announce(plan, "idle", "The release store offers nothing newer that this host can run.");
+    return;
+  }
+  if (plan.candidate != found->version || plan.candidate_manifest != found->manifest_sha256)
+    plan.Choose(*found, NowMs() + RandomBelow(delay_ms + 1));
+  if (NowMs() < plan.install_at_ms) {
+    // The list is asked for once more when the wait is over, so a release
+    // withdrawn or replaced by a newer one meanwhile is not installed.
+    plan.next_check_ms = std::min(plan.next_check_ms, plan.install_at_ms);
+    Announce(plan, "waiting", "Found release " + found->version + ". It will be installed shortly.");
+    return;
+  }
+  (void)InstallCandidate(plan, *found, 900);
+}
+/** On first start, before the release in the image is installed: when the
+ * store has a newer release this host can run, install that one at once,
+ * with no random wait (nothing is serving yet, and many new hosts starting
+ * together is not what the wait is for). Returns true when a release from
+ * the store now runs. In every other case (no store, automatic updates off,
+ * the store silent, nothing newer, the download or the install failing)
+ * the caller installs the release in the image, and the periodic check
+ * updates later. The whole attempt at the store is given about a minute. */
+bool Controller::InstallNewestFromStore(const Release& baked) {
+  if (!AutomaticUpdates()) return false;
+  const auto give_up = SteadyClock::now() + std::chrono::seconds(60);
+  auto plan = LoadUpdatePlan(PlanFile());
+  SettleInterruptedStep(plan);
+  struct Setup {
+    bool& flag;
+    explicit Setup(bool& value) : flag(value) { flag = true; }
+    ~Setup() { flag = false; }
+    Setup(const Setup&) = delete;
+    Setup& operator=(const Setup&) = delete;
+  } setup(announce_as_setup_);
+  const uint64_t interval_ms = c_.update_check_seconds * 1000ULL;
+  std::optional<ReleaseIndexEntry> found;
+  Announce(plan, "looking", "Looking for the newest node release.");
+  try {
+    found = NewestToInstall(30);
+  } catch (const std::exception& error) {
+    if (interrupted) throw;
+    std::cerr << "Release store not checked at first start: " << error.what() << '\n';
+    plan.next_check_ms = NowMs() + interval_ms;
+    Announce(plan, "failed",
+             "The release store could not be checked (" + PublicReason(error.what()) +
+                 "). Installing the release that came with the image; this host will ask again.");
+    return false;
+  }
+  plan.last_check_ms = NowMs();
+  plan.next_check_ms = plan.last_check_ms + interval_ms;
+  if (!found || found->version == baked.version) {
+    plan.Forget();
+    Announce(plan, "idle", "The release store offers nothing newer that this host can run.");
+    return false;
+  }
+  const auto left = std::chrono::duration_cast<std::chrono::seconds>(give_up - SteadyClock::now()).count();
+  return InstallCandidate(plan, *found, static_cast<unsigned>(std::max<int64_t>(left, 10)));
+}
+/** How much of the candidate the unprivileged process has downloaded so
+ * far. Only the size of its file is looked at, never its contents, and the
+ * answer is capped at the size the list names. */
+uint64_t Controller::DownloadedSoFar(const UpdatePlan& plan) const {
+  const auto folder = c_.fetch_state / "staging" / plan.candidate;
+  for (const char* name : {"fortis-node.partial", "fortis-node"}) {
+    struct stat info {};
+    if (lstat((folder / name).c_str(), &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0)
+      return std::min<uint64_t>(static_cast<uint64_t>(info.st_size), plan.candidate_bytes);
+  }
+  return 0;
+}
+/** What the pages say about updates: the saved plan, and from the accepted
+ * list every newer release that was not taken. `selected` is the installed
+ * release as `app/current` names it. Reads local files only. */
+UpdateFacts Controller::UpdateReport(const std::string& selected) const {
+  UpdateFacts update;
+  if (!AutomaticUpdates()) {
+    update.message = c_.store.empty() ? "No release store is set. Releases are installed by the operator."
+                                      : "Automatic updates are switched off. Releases are installed by the operator.";
+    return update;
+  }
+  const auto plan = LoadUpdatePlan(PlanFile());
+  update.state = plan.state;
+  update.message = plan.message;
+  update.candidate_version = plan.candidate;
+  update.candidate_interface = plan.candidate_interface;
+  update.candidate_bytes = plan.candidate_bytes;
+  update.install_at_ms = plan.install_at_ms;
+  update.last_check_ms = plan.last_check_ms;
+  update.next_check_ms = plan.next_check_ms;
+  if (plan.state == "downloading" && !plan.candidate.empty()) update.downloaded_bytes = DownloadedSoFar(plan);
+  try {
+    const auto choice = ChooseRelease(ParseReleaseIndex(Read(AcceptedIndex(), 256 * 1024)));
+    update.skipped = choice.skipped;
+    if (choice.newest && "releases/" + choice.newest->version != selected &&
+        fs::exists(FailureMark(choice.newest->manifest_sha256)))
+      update.skipped.push_back(
+          {choice.newest->version, "did not install on this host and is not tried again automatically", false});
+  } catch (const std::exception&) {
+    // No list has been accepted yet, so nothing was skipped.
+    update.skipped.clear();
+  }
+  return update;
+}
+/** The last few installs and rollbacks, newest first, from the deployment
+ * ledger. Restarts, adoptions and stops are left out: they are not changes
+ * of release. The ledger keeps one record per start of the node and
+ * overwrites its outcome when that node later stops, so an install is
+ * recognised by what only `Update` leaves on a record: a measured
+ * activation time, together with having been accepted as stable. Looks at
+ * a bounded number of the newest records. */
+std::vector<ReleaseEvent> Controller::History() const {
+  constexpr uint64_t kLookedAt = 25;
+  constexpr size_t kShown = 5;
+  std::vector<ReleaseEvent> events;
+  const auto newest = ledger_->Head().deployments;
+  for (uint64_t id = newest; id > 0 && newest - id < kLookedAt && events.size() < kShown; --id) {
+    const auto record = ledger_->Load(id);
+    const bool installed = record.outcome == "accepted" || (record.duration_ms > 0 && record.stable != 0);
+    const char* result = record.outcome == "rolled-back"    ? "rolled-back"
+                         : record.outcome == "not-promoted" ? "refused"
+                         : installed                        ? "installed"
+                                                            : nullptr;
+    if (result == nullptr) continue;
+    // An installed release's record later holds why its node stopped, which
+    // says nothing about the install.
+    events.push_back({record.version, record.digest, result, installed ? "none" : record.reason,
+                      record.stable ? record.stable : record.updated});
+  }
+  return events;
 }
 acme::Settings AcmeSettings(const Settings& c) {
   acme::Settings settings;
@@ -1683,8 +2145,11 @@ void Controller::Update(const fs::path& package) {
     const auto error = std::current_exception();
     record.duration_ms = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now() - started).count());
-    interrupted = 0;  // Finish journal recovery even if the initiating request
-                      // was interrupted.
+    // Finish journal recovery even if the initiating request was interrupted,
+    // then put the request to stop back: the supervisor installs releases
+    // from its own loop and must still see that it was asked to end.
+    const bool was_interrupted = interrupted != 0;
+    interrupted = 0;
     CleanPreflight(record.id);
     if (journal) {
       try {
@@ -1717,6 +2182,7 @@ void Controller::Update(const fs::path& package) {
       ledger_->Head().candidate = 0;
       ledger_->Save(record);
     }
+    if (was_interrupted) interrupted = 1;
     std::rethrow_exception(error);
   }
 }
@@ -1795,6 +2261,14 @@ void Controller::Action(const std::string& action, const fs::path& package) {
     }
     ledger_->Publish();
     RenewCertificates();
+    // Nothing that goes wrong with an automatic update may stop the
+    // supervisor from watching the node it has.
+    try {
+      AutomaticUpdate();
+    } catch (const std::exception& error) {
+      if (interrupted) throw;
+      std::cerr << "Automatic update not completed: " << error.what() << '\n';
+    }
     PublishHealth();
     return;
   }

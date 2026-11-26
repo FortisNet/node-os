@@ -37,7 +37,7 @@ GENERATED := $(BUILD)/generated
 PAGE_SHELL := $(GENERATED)/page_shell.inc
 CPPFLAGS := $(MBEDTLS_DEFINES) -DFORTIS_ORCHESTRATOR_VERSION=\"$(ORCHESTRATOR_VERSION)\" -pthread -I$(MBEDTLS)/include -Ilib -Iorchestrator -Isandbox -I$(GENERATED)
 
-ORCHESTRATOR_SOURCES := $(addprefix orchestrator/,native_update.cpp node_keeper.cpp acme_client.cpp page_server.cpp release_ledger.cpp backup.cpp release_fetch.cpp pages.cpp first_boot.cpp)
+ORCHESTRATOR_SOURCES := $(addprefix orchestrator/,native_update.cpp node_keeper.cpp acme_client.cpp page_server.cpp release_ledger.cpp backup.cpp release_fetch.cpp update_plan.cpp pages.cpp first_boot.cpp)
 SANDBOX_SOURCES := sandbox/sandbox_spec.cpp sandbox/sandbox_manager.cpp
 LIB_SOURCES := lib/bounded_json.cpp lib/outbound_https.cpp lib/sandbox_socket.cpp
 TEST_SOURCES := tests/release_ledger_test.cpp tests/sandbox_spec_test.cpp tests/parser_fuzz.cpp

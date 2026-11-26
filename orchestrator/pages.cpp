@@ -88,8 +88,11 @@ std::string Page(const HostFacts& facts, std::string_view title, std::string_vie
   };
   put("@TITLE@", title);
   put("@DESCRIPTION@", description);
-  // While the node is not serving, things are changing: look again soon.
-  put("@REFRESH@", Serving(facts) ? "" : "\n<meta http-equiv=\"refresh\" content=\"5\">");
+  // While the node is not serving, or a release is on its way in, things are
+  // changing: look again soon.
+  const auto& update = facts.update.state;
+  const bool settled = Serving(facts) && (update == "off" || update == "idle" || update == "failed");
+  put("@REFRESH@", settled ? "" : "\n<meta http-equiv=\"refresh\" content=\"5\">");
   put("@EYEBROW@", eyebrow);
   put("@HEADLINE@", headline);
   put("@TAGLINE@", "Intelligence needs somewhere<br>to connect, discover and act.");
@@ -115,6 +118,45 @@ std::string JsonChecks(const std::vector<HealthCheck>& checks) {
   }
   return out + "]";
 }
+/** "less than a minute", "about a minute", "about 5 minutes", "about 2 hours". */
+std::string About(uint64_t seconds) {
+  if (seconds < 60) return "less than a minute";
+  const uint64_t minutes = (seconds + 30) / 60;
+  if (minutes == 1) return "about a minute";
+  if (minutes < 90) return "about " + std::to_string(minutes) + " minutes";
+  return "about " + std::to_string((minutes + 30) / 60) + " hours";
+}
+/** Seconds until the waiting release is installed; 0 when that is due. */
+uint64_t InstallIn(const HostFacts& facts) {
+  const auto& update = facts.update;
+  return update.install_at_ms > facts.generated_ms ? (update.install_at_ms - facts.generated_ms + 999) / 1000 : 0;
+}
+/** What the host is doing about node releases, in one sentence. The plan
+ * holds the sentence for most states; the two that count (a wait, a
+ * download) are worded here, from the numbers of this very report. */
+std::string UpdateSentence(const HostFacts& facts) {
+  const auto& update = facts.update;
+  if (update.state == "waiting" && !update.candidate_version.empty()) {
+    const auto seconds = InstallIn(facts);
+    return "Found release " + update.candidate_version + ". It will be installed " +
+           (seconds ? "in " + About(seconds) : std::string("in a moment")) + ".";
+  }
+  if (update.state == "downloading" && !update.candidate_version.empty() && update.candidate_bytes) {
+    const auto percent = std::min<uint64_t>(100, update.downloaded_bytes * 100 / update.candidate_bytes);
+    return "Downloading release " + update.candidate_version + ": " + std::to_string(percent) + "% so far.";
+  }
+  return update.message;
+}
+/** The "Node" entry of the Updates section, on both pages: the sentence
+ * above, then one line for every newer release that was not taken. */
+std::string NodeUpdates(const HostFacts& facts) {
+  std::string out = "<dl class=\"facts\"><dt>Node</dt><dd>" + Escape(UpdateSentence(facts)) + "</dd>";
+  for (const auto& skipped : facts.update.skipped)
+    out += "<dt>Skipped</dt><dd>A newer release, " + Escape(skipped.version) + ", was not installed: it " +
+           Escape(skipped.reason) + "." + (skipped.needs_newer_host ? " A newer Node OS can run it." : "") + "</dd>";
+  return out + "</dl>";
+}
+std::string JsonNumberOrNull(uint64_t value) { return value ? std::to_string(value) : "null"; }
 /** Replace `path` in one step, without forcing it to storage: these files
  * are rewritten every few seconds and rebuilt from scratch after a restart. */
 void Replace(const fs::path& path, std::string_view bytes) {
@@ -151,6 +193,49 @@ std::string RenderHealthJson(const HostFacts& facts) {
   return out + ",\"checks\":" + JsonChecks(facts.node) + "}}\n";
 }
 
+std::string RenderNodeJson(const HostFacts& facts) {
+  const auto& update = facts.update;
+  std::string out = "{\"schemaVersion\":1,\"generatedMs\":" + std::to_string(facts.generated_ms) + ",\"running\":";
+  // "running" names the installed release; its process may be stopped for a
+  // moment, which `sinceMs` being null says.
+  if (facts.node_version.empty() || facts.node_sha256.empty()) out += "null";
+  else
+    out += "{\"version\":" + Quote(facts.node_version) + ",\"sha256\":" + Quote(facts.node_sha256) +
+           ",\"hostInterface\":" + std::to_string(facts.node_host_interface) +
+           ",\"sinceMs\":" + JsonNumberOrNull(facts.node_since_ms) + "}";
+  out += ",\"host\":{\"nodeOsVersion\":" + Quote(facts.orchestrator_version) +
+         ",\"architecture\":" + Quote(facts.architecture) + ",\"runsIn\":" + Quote(facts.runs_in) +
+         ",\"hostInterfaceMin\":" + std::to_string(kHostInterfaceMin) +
+         ",\"hostInterfaceMax\":" + std::to_string(kHostInterfaceMax) + ",\"channel\":" + Quote(facts.channel) +
+         ",\"automaticUpdates\":" + (facts.automatic_updates ? "true" : "false") +
+         ",\"store\":" + (facts.store.empty() ? "null" : Quote(facts.store)) +
+         "},\"update\":{\"state\":" + Quote(update.state) + ",\"candidate\":";
+  if (update.candidate_version.empty()) out += "null";
+  else
+    out += "{\"version\":" + Quote(update.candidate_version) +
+           ",\"hostInterface\":" + std::to_string(update.candidate_interface) +
+           ",\"bytes\":" + std::to_string(update.candidate_bytes) + "}";
+  const bool waiting = update.state == "waiting", downloading = update.state == "downloading";
+  out += ",\"installInSeconds\":" + (waiting ? std::to_string(InstallIn(facts)) : "null") +
+         ",\"downloadedBytes\":" + (downloading ? std::to_string(update.downloaded_bytes) : "null") +
+         ",\"lastCheckMs\":" + JsonNumberOrNull(update.last_check_ms) +
+         ",\"nextCheckMs\":" + JsonNumberOrNull(update.next_check_ms) + ",\"message\":" + Quote(UpdateSentence(facts)) +
+         "},\"skipped\":[";
+  for (const auto& skipped : update.skipped) {
+    if (out.back() != '[') out += ',';
+    out += "{\"version\":" + Quote(skipped.version) + ",\"reason\":" + Quote(skipped.reason) + "}";
+  }
+  out += "],\"history\":[";
+  for (const auto& event : facts.history) {
+    if (out.back() != '[') out += ',';
+    out += "{\"version\":" + Quote(event.version) +
+           ",\"sha256\":" + (event.sha256.empty() ? "null" : Quote(event.sha256)) +
+           ",\"result\":" + Quote(event.result) + ",\"reason\":" + Quote(event.reason) +
+           ",\"atMs\":" + JsonNumberOrNull(event.at_ms) + "}";
+  }
+  return out + "]}\n";
+}
+
 std::string RenderHealthPage(const HostFacts& facts) {
   const bool healthy = HealthStatus(facts) == 200;
   std::string content = std::string("<div class=\"banner") + (healthy ? "" : " bad") + "\" role=\"status\"><strong>" +
@@ -165,9 +250,13 @@ std::string RenderHealthPage(const HostFacts& facts) {
   if (!facts.node_version.empty()) node += " Release " + Escape(facts.node_version) + ".";
   node += "</p>" + (facts.node.empty() ? std::string() : Checks(facts.node));
   content += Section("node", "FortisNet node", "02 / NODE", node);
-  content += Section("machines", "For monitoring tools", "03 / JSON",
+  content += Section("updates", "Updates", "03 / RELEASES", NodeUpdates(facts));
+  content += Section("machines", "For monitoring tools", "04 / JSON",
                      "<p class=\"note\">The same report is at <a href=\"/health.json\"><code>/health.json</code></a>. "
-                     "Both answer 200 when everything above is healthy and 503 otherwise.</p>");
+                     "Both answer 200 when the orchestrator and the node above are healthy and 503 otherwise. "
+                     "Which release runs and what the host is doing about newer ones is at "
+                     "<a href=\"/node.json\"><code>/node.json</code></a>; that never makes a host "
+                     "unhealthy.</p>");
   return Page(facts, "FortisNet node: health", "Whether this FortisNet node host is well.", "Health",
               healthy ? "All<br><span>well.</span>" : "Needs<br><span>attention.</span>", content);
 }
@@ -193,7 +282,12 @@ std::string RenderFirstPage(const HostFacts& facts) {
   content += Section("host", "This host", "01 / HOST", host);
 
   std::string updates;
-  if (!facts.store_configured) {
+  if (facts.automatic_updates) {
+    updates = NodeUpdates(facts) +
+              "<p class=\"note\">This host looks for new node releases by itself. It installs one only when it is "
+              "signed with the key in this image, and goes back to the release before it if the new one does not "
+              "hold.</p>";
+  } else if (!facts.store_configured) {
     updates = "<p class=\"note\">No release store is set. Releases are installed by the operator.</p>";
   } else if (!facts.staged.empty()) {
     updates =
@@ -236,6 +330,7 @@ void PublishPages(const fs::path& directory, const HostFacts& facts) {
   Replace(directory / kFirstPageFile, RenderFirstPage(facts));
   Replace(directory / kHealthPageFile, RenderHealthPage(facts));
   Replace(directory / kHealthJsonFile, RenderHealthJson(facts));
+  Replace(directory / kNodeJsonFile, RenderNodeJson(facts));
   // Last: a reader that sees the new status also sees the new report.
   Replace(directory / kHealthStatusFile,
           std::to_string(HealthStatus(facts)) + " " + std::to_string(facts.generated_ms) + "\n");

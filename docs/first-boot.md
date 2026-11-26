@@ -25,10 +25,14 @@ flowchart TD
     M -- "yes" --> N["Ask Let's Encrypt for a certificate<br/><i>orchestrator/acme_client.cpp</i>"]
     N -- "refused" --> X["Wait ten minutes<br/>the release is not blamed"]
     X --> J
-    N -- "issued" --> O["Update: verify, preflight and<br/>install the node release"]
+    N -- "issued" --> S1{"Release store set, and<br/>a newer release this host can run?"}
+    S1 -- "yes" --> S2["Download and verify it<br/>about a minute at most"]
+    S2 -- "installed" --> R
+    S2 -- "store silent, or the release<br/>does not hold" --> O
+    S1 -- "no" --> O["Update: verify, preflight and<br/>install the release in the image"]
     O -- "fails" --> Y["Release quarantined<br/>page asks for an operator"]
     O -- "works" --> R["Keeper runs the node under crun<br/><i>orchestrator/node_keeper.cpp</i>"]
-    R --> S["https://ADDRESS/ serves the first page<br/>supervisor keeps ticking: health,<br/>certificate renewal, restarts"]
+    R --> S["https://ADDRESS/ serves the first page<br/>supervisor keeps ticking: health,<br/>certificate renewal, restarts,<br/>newer releases from the store"]
 ```
 
 | Step | What happens | Started by | Code |
@@ -41,13 +45,14 @@ flowchart TD
 | 6 | Each tick with no node installed: the health and first pages are written and the page server shows them on port 80 | The supervisor's tick | `PublishHealth` and `ShowPagesWhileStopped` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp); [orchestrator/pages.cpp](../orchestrator/pages.cpp); [orchestrator/page_server.cpp](../orchestrator/page_server.cpp) |
 | 7 | The release in the image is verified against the image's key. The host then waits until the clock is set and checks that its address is public | The same tick | `InstallBakedRelease` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp); `ClockSynchronised` and `PublicAddress` in [orchestrator/first_boot.cpp](../orchestrator/first_boot.cpp) |
 | 8 | A certificate for the address is requested. The page server answers the authority's check on port 80. A refusal is retried after ten minutes | `InstallBakedRelease` calls `Certificates` | [orchestrator/acme_client.cpp](../orchestrator/acme_client.cpp), `Issue` |
-| 9 | The node release is installed the same way any update is: verified, tried, then made current | `InstallBakedRelease` calls `Update` | `Update` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp) |
-| 10 | The node runs in its own container and serves `https://ADDRESS/`. Later ticks watch its health, renew the certificate and restart it if it stops | The keeper and the supervisor's tick | [orchestrator/node_keeper.cpp](../orchestrator/node_keeper.cpp); `RenewCertificates` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp) |
+| 9 | Only when a release store is set (none is by default) and automatic updates are on: the store's signed release list is fetched, and if it has a newer release than the image's that this host can run, that one is downloaded, verified and installed at once. The store gets about a minute. If it does not answer, has nothing newer, or its release does not hold, step 10 follows | `InstallBakedRelease` calls `InstallNewestFromStore` | `InstallNewestFromStore`, `CheckReleases` and `InstallCandidate` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp); [releases.md](releases.md#automatic-updates) |
+| 10 | The node release in the image is installed the same way any update is: verified, tried, then made current | `InstallBakedRelease` calls `Update` | `Update` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp) |
+| 11 | The node runs in its own container and serves `https://ADDRESS/`. Later ticks watch its health, renew the certificate, restart it if it stops and, with a store, install newer releases | The keeper and the supervisor's tick | [orchestrator/node_keeper.cpp](../orchestrator/node_keeper.cpp); `RenewCertificates` and `AutomaticUpdate` in [orchestrator/native_update.cpp](../orchestrator/native_update.cpp) |
 
 The same files are also packaged as a container image; there, steps 1 to 3
 are done by Docker and the server. See [One build, three images](images.md).
 
-Steps 7 to 9 are tried again at every tick until they succeed, and the first
+Steps 7 to 10 are tried again at every tick until they succeed, and the first
 page says in one sentence what the host is waiting for. Everything is logged
 to `/var/log/fortis-orchestrator.log`. What can be set when the machine is
 created is described in

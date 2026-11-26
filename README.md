@@ -245,13 +245,22 @@ way as everything here, is the next step.
 | Log in | `ssh alpine@ADDRESS`, key only | `docker exec -it fortis-node sh` |
 | See health | `doas fortis status`, or open `/health` | `docker exec fortis-node fortis status` |
 | Read the log | `doas tail -f /var/log/fortis-orchestrator.log` | `docker logs -f fortis-node` |
+| See which release runs and what the host is doing about newer ones | Open `/`, or `/node.json` | The same |
 | List releases on offer | `doas fortis releases` | `docker exec fortis-node fortis releases` |
-| Download and verify one | `doas fortis fetch VERSION` | `docker exec fortis-node fortis fetch VERSION` |
-| Install it | `doas fortis update VERSION` | `docker exec fortis-node fortis update VERSION` |
+| Download and verify one by hand | `doas fortis fetch VERSION` | `docker exec fortis-node fortis fetch VERSION` |
+| Install it by hand | `doas fortis update VERSION` | `docker exec fortis-node fortis update VERSION` |
+| Stop the host installing releases by itself | Set `FORTIS_NATIVE_AUTO_UPDATE=0` in `/etc/fortis/orchestrator.conf` | The same file, inside the container |
 | Back up the database | `doas fortis backup` | `docker exec fortis-node fortis backup` |
 
 `/health.json` gives monitoring tools the same report as the health page and
 answers 200 only when everything is healthy.
+
+A host that has been given a release store finds, downloads and installs
+the newest node release it can run by itself, on first start and
+afterwards, and shows what it is doing on its first page and in
+`/node.json`. Releases are published on two channels, `stable` and `edge`;
+that there are exactly these two is provisional and expected to change.
+[docs/releases.md](docs/releases.md) explains all of it.
 
 ## Documentation
 
@@ -260,7 +269,7 @@ answers 200 only when everything is healthy.
 | [docs/first-boot.md](docs/first-boot.md) | From a new machine to a running node, step by step, and the settings you can give at creation |
 | [docs/images.md](docs/images.md) | The three images, how a disk image differs from a container image, and why Docker cannot boot a disk |
 | [docs/operating.md](docs/operating.md) | Reaching a host, its logs, the first page and the health report |
-| [docs/releases.md](docs/releases.md) | Publishing node releases and how hosts fetch them |
+| [docs/releases.md](docs/releases.md) | Publishing node releases, how hosts fetch them, automatic updates and their settings, and which releases a host can run |
 | [docs/backup.md](docs/backup.md) | Backup and restore |
 | [image/README.md](image/README.md) | Exactly what is in the images, and why |
 | [docs/development.md](docs/development.md) | Layout of the code, the gate, release builds and the rules the design keeps |
@@ -284,9 +293,14 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 
 ## What is not done yet
 
-- **A public store for node updates.** The images carry a signed node
-  release, but there is no public store yet that running hosts fetch newer
-  ones from.
+- **A public store for node updates, switched on in the images.** A host
+  that is given a release store updates its node by itself
+  ([docs/releases.md](docs/releases.md)), but the images name no store yet:
+  out of the box a host runs the signed node release it carries until an
+  operator sets a store or installs another release.
+- **`/node.json` while the node runs.** The orchestrator writes it and the
+  page server serves it while no node runs; the node itself does not serve
+  it yet.
 - **The node program is not compiled in public yet.** Its source is in
   [FortisNet/node](https://github.com/FortisNet/node) and everything else
   is built in public ([Built in public](#built-in-public)); compiling the
