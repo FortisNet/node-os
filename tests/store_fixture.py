@@ -1,5 +1,6 @@
 """A release store for the host tests: static files over HTTPS on loopback,
-with range requests, the way an object store serves them."""
+with range requests, the way an object store serves them, and redirects, the
+way GitHub answers downloads."""
 import http.server
 import os
 from pathlib import Path
@@ -14,6 +15,9 @@ class Store:
     def __init__(self, folder: Path, certificate: Path, key: Path):
         self.folder, self.requests = folder, []
         self.truncate = {}   # path -> number of bytes to cut from the end of each answer
+        # path -> (status, Location): answer with a redirect instead of a file,
+        # the way GitHub answers every download of a release.
+        self.redirects = {}
         store = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -24,6 +28,16 @@ class Store:
 
             def do_GET(self):
                 store.requests.append((self.path, self.headers.get('Range')))
+                if self.path in store.redirects:
+                    status, location = store.redirects[self.path]
+                    page = b'<html>moved</html>\n'
+                    self.send_response(status)
+                    self.send_header('Location', location)
+                    self.send_header('Content-Length', str(len(page)))
+                    self.send_header('Connection', 'close')
+                    self.end_headers()
+                    self.wfile.write(page)
+                    return
                 # Serve only files inside the store's folder, whatever the path says.
                 root = os.path.realpath(store.folder)
                 name = os.path.normpath(os.path.join(root, self.path.lstrip('/')))

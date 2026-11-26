@@ -83,13 +83,14 @@ create another rather than try to repair it by hand.
 ## The first page and health
 
 The orchestrator is the only author of what this host shows about itself. It
-writes four finished files, every few seconds and whenever something changes:
+writes five finished files, every few seconds and whenever something changes:
 
 | File | Shown at | What it is |
 | --- | --- | --- |
-| `index.html` | `/` | The first page: what this host is, the node's state in plain words, the installed release, an available or staged update with the command to use, and links into the node |
+| `index.html` | `/` | The first page: what this host is, the node's state in plain words, the installed release, what the host is doing about newer releases (or, without automatic updates, an available or staged update with the command to use), and links into the node |
 | `health.html` | `/health` | The health report as a page |
 | `health.json` | `/health.json` | The same report for monitoring tools, in a fixed, versioned form |
+| `node.json` | `/node.json` | Which release runs, what this Node OS can run, and what the host is doing about newer releases ([releases.md](releases.md#what-the-host-shows)) |
 | `health.status` | | One line, `STATUS WRITTEN_MS`, so whoever serves the report can answer with the right status code and notice a report that nobody refreshes |
 
 - **Self-contained.** One file each: no script, and nothing loaded from
@@ -100,15 +101,36 @@ writes four finished files, every few seconds and whenever something changes:
   provider answers.
 - **200 or 503.** `/health` and `/health.json` answer 200 only when every
   check is healthy and the node serves, and 503 when the report is more than
-  a minute old.
+  a minute old. `/node.json` always answers 200: a newer release, or a
+  release store that does not answer, does not make a host unhealthy.
 - **Who serves them.** While no node runs (nothing installed yet, an update
   or a restart in progress, stopped), the page server does, on the public
   HTTP port, from its own container with no network. It serves exactly `/`,
-  `/health`, `/health.json` and certificate challenges, and answers anything
-  else with a short notice.
+  `/health`, `/health.json`, `/node.json` and certificate challenges, and
+  answers anything else with a short notice.
 
 While the node runs, it serves these same files at `/`, `/health` and
-`/health.json`, over HTTPS.
+`/health.json`, over HTTPS. `/node.json` is new: a node release serves it
+once it knows the file, and until then it is answered only while no node
+runs.
+
+## Updates of the node
+
+A host with a release store installs newer node releases by itself; a host
+without one (the default) runs what its image brought until an operator
+installs something else. [releases.md](releases.md) has the whole story.
+
+| To do this | Command |
+| --- | --- |
+| See what the host is doing about releases | Open `/`, or `/node.json` |
+| See what the store offers | `doas fortis releases` |
+| Install one release by hand | `doas fortis fetch VERSION`, then `doas fortis update VERSION` |
+| Keep a host on the release it has | Set `FORTIS_NATIVE_AUTO_UPDATE=0` in `/etc/fortis/orchestrator.conf` |
+| Follow the other channel | Set `FORTIS_NATIVE_CHANNEL=edge` (or `stable`). Having these two channels is provisional and expected to change |
+
+Settings are read again at every step, so a change needs no restart. While
+the host downloads or installs a release, other `fortis` commands answer
+"another update is active": wait for it to finish.
 
 Not built yet: HTTPS on the page server. Until then, a visitor arriving over
 `https://` while no node runs gets no answer; `http://` works.

@@ -100,6 +100,11 @@ std::string Answer(int challenges, int pages, std::string_view request) {
       const auto body = File(pages, json ? kHealthJsonFile : kHealthPageFile, kPageBytes);
       if (!body.empty())
         return Response(ReportedStatus(pages), json ? "application/json" : "text/html; charset=utf-8", body, head);
+    } else if (target == "/node.json") {
+      // What runs here and what the host is doing about newer releases. It
+      // is a description, not a verdict, so it is always answered with 200.
+      const auto body = File(pages, kNodeJsonFile, kPageBytes);
+      if (!body.empty()) return Response(200, "application/json", body, head);
     }
   }
   return Text(503, kNotice, head);

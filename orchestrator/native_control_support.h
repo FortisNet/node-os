@@ -11,6 +11,7 @@
 #include <exception>
 #include <fcntl.h>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <mbedtls/pk.h>
@@ -44,6 +45,26 @@ inline constexpr std::string_view kSeccompArchitecture = "unsupported";
 inline constexpr unsigned kElfMachine = 0;
 static_assert(false, "The orchestrator is built for x86_64 and aarch64 only");
 #endif
+/** The host interface: everything a node release needs from the host it runs
+ * on (how its sockets, folders, certificates and pages are handed to it).
+ * A release manifest names the one interface number the release was built
+ * against; a manifest without one means 1. This orchestrator offers every
+ * number from the minimum to the maximum, and refuses a release outside
+ * that range before anything of it runs.
+ *
+ * The rule that keeps hosts and releases apart from each other's schedule:
+ * the number goes up only when the node needs something new from its host,
+ * and an orchestrator that learns a new number keeps offering the previous
+ * one (the maximum rises, the minimum stays). So a new Node OS always runs
+ * the releases the one before it ran, and an old Node OS simply does not
+ * take a release it cannot serve. */
+inline constexpr unsigned kHostInterfaceMin = 1;
+inline constexpr unsigned kHostInterfaceMax = 1;
+/** No manifest or release list may name a number above this. */
+inline constexpr unsigned kHostInterfaceLimit = 1000;
+inline constexpr bool HostInterfaceOffered(unsigned number) {
+  return number >= kHostInterfaceMin && number <= kHostInterfaceMax;
+}
 using SteadyClock = std::chrono::steady_clock;
 inline constexpr uint64_t kMaxPublicInteger = 9007199254740991ULL;
 inline volatile std::sig_atomic_t interrupted = 0;
@@ -143,10 +164,12 @@ struct CommandResult {
  * synchronously. Owns/reaps the child and kills its process group on
  * timeout/output overflow. No command arguments or captured stderr are included
  * in public error messages. Serialized controller calls only; never invoke
- * after starting controller threads.
+ * after starting controller threads. `while_waiting`, when given, is called
+ * about every two seconds until the command ends, so a long wait can keep
+ * something fresh; if it throws, the command is killed like on a timeout.
  */
-inline CommandResult Command(std::vector<std::string> command, unsigned timeout = 30,
-                             size_t output_limit = 1024 * 1024) {
+inline CommandResult Command(std::vector<std::string> command, unsigned timeout = 30, size_t output_limit = 1024 * 1024,
+                             const std::function<void()>& while_waiting = {}) {
   Require(!command.empty(), "empty command");
   Require(command.size() <= 128, "command argument count exceeded");
   std::vector<char*> argv;
@@ -178,9 +201,14 @@ inline CommandResult Command(std::vector<std::string> command, unsigned timeout 
   int status = 0;
   bool reaped = false, eof = false;
   const auto deadline = SteadyClock::now() + std::chrono::seconds(timeout);
+  auto next_call = SteadyClock::now() + std::chrono::seconds(2);
   try {
     while (!reaped || !eof) {
       Require(SteadyClock::now() < deadline && !interrupted, "command timed out or interrupted");
+      if (while_waiting && SteadyClock::now() >= next_call) {
+        while_waiting();
+        next_call = SteadyClock::now() + std::chrono::seconds(2);
+      }
       std::array<char, 8192> buffer{};
       for (;;) {
         const ssize_t count = ::read(input.get(), buffer.data(), buffer.size());

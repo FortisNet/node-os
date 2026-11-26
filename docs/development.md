@@ -28,7 +28,7 @@ make release VERSION=1.2.3        # hardened static releases: dist/1.2.3/x86_64 
 | --- | --- |
 | `clang` | Builds with Clang and libc++, runs every test |
 | `gcc` | Builds with GCC, runs every test |
-| `sanitizers` | Builds with AddressSanitizer and UndefinedBehaviorSanitizer, runs every test under them, then fuzzes the parsers of unverified text for a minute ([tests/parser_fuzz.cpp](../tests/parser_fuzz.cpp)) |
+| `sanitizers` | Builds with AddressSanitizer and UndefinedBehaviorSanitizer, runs every test under them, then fuzzes the parsers of unverified text (both release list formats among them) for a minute ([tests/parser_fuzz.cpp](../tests/parser_fuzz.cpp)) |
 | `analyzer` | The Clang Static Analyzer on every source file |
 | `lint` | clang-tidy on every source file, clang-format on all but `lib/` |
 | `cppcheck` | cppcheck on every source file |
@@ -133,4 +133,11 @@ What this repository and the node agree on is a contract, not shared code:
 - the node's health answers on its loopback port;
 - the signed release format (`manifest`, `manifest.sig`, `fortis-node`);
 - the four page files the orchestrator writes and the node serves at `/`,
-  `/health` and `/health.json` ([operating.md](operating.md#the-first-page-and-health)).
+  `/health` and `/health.json` ([operating.md](operating.md#the-first-page-and-health)),
+  and a fifth, `node.json`, written beside them for the node to serve at
+  `/node.json`. Node releases made before that file existed do not serve it;
+- the host interface number: a release manifest may say `host_interface=N`,
+  and this orchestrator runs only releases whose number it offers
+  ([releases.md](releases.md#which-releases-a-host-can-run)). The number
+  goes up whenever a change to anything in this list would stop an existing
+  release from working.
