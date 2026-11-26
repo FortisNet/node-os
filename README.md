@@ -37,6 +37,10 @@ the commit it was built from.
 | **Container image**, x86-64 | A server that already runs Docker, with an Intel or AMD processor |
 | **Container image**, ARM64 | A server that already runs Docker, with an ARM processor |
 
+The node itself, the program wallets and applications talk to, is developed
+in [FortisNet/node](https://github.com/FortisNet/node). This repository is
+everything around it.
+
 Inside each: stock [Alpine Linux](https://alpinelinux.org) with the packages
 a node host does not need taken out, the **orchestrator** (one small C++
 program), one signed **node release**, and the public key future releases
@@ -226,13 +230,13 @@ nothing but sign two small text files that an earlier job already checked.
 
 ### What is not built in public yet
 
-The node program itself. Today a maintainer compiles it and uploads it;
-GitHub then checks it against its description and signs it after approval,
-as above. So you can verify *which* node release an image contains and that
-the release key signed it, but not yet *how it was compiled*. Its source
-and its build are moving to
-[FortisNet/node](https://github.com/FortisNet/node), where it will be built
-the same way as everything here.
+The node program itself. Its source is public, in
+[FortisNet/node](https://github.com/FortisNet/node), but today a maintainer
+compiles it and uploads it; GitHub then checks it against its description
+and signs it after approval, as above. So you can read the source, verify
+*which* node release an image contains and that the release key signed it,
+but not yet prove *how it was compiled*. Building it on GitHub, the same
+way as everything here, is the next step.
 
 ## Operating a host
 
@@ -283,9 +287,10 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 - **A public store for node updates.** The images carry a signed node
   release, but there is no public store yet that running hosts fetch newer
   ones from.
-- **The node program is not compiled in public yet.** Everything else is
-  ([Built in public](#built-in-public)); the node's own source and build
-  move to [FortisNet/node](https://github.com/FortisNet/node) next.
+- **The node program is not compiled in public yet.** Its source is in
+  [FortisNet/node](https://github.com/FortisNet/node) and everything else
+  is built in public ([Built in public](#built-in-public)); compiling the
+  node on GitHub is next.
 - **The disk image on a real cloud.** See
   [Where it has been tried](#where-it-has-been-tried).
 - **Updating the system itself.** The node is updated by the orchestrator.

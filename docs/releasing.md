@@ -180,7 +180,8 @@ flowchart LR
     P --> M["Merge: images are built,<br/>tested and published"]
 ```
 
-1. Build the node release for both architectures in the node's repository.
+1. Build the node release for both architectures in the node's repository,
+   [FortisNet/node](https://github.com/FortisNet/node) (`make native-release VERSION=...`).
 2. Hand it over:
 
    ```sh
