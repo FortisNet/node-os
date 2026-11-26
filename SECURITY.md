@@ -39,8 +39,10 @@ the node there.
   release signing key. A host runs any node release that key signs.
 - The release store, the certificate authority's answers, the address
   lookup services and the network are not trusted.
-- A container image runs with `--privileged`, which is close to being
-  administrator of the server it runs on. A machine of its own is the
-  stronger arrangement.
+- A container image runs with the capabilities `SYS_ADMIN`, `NET_ADMIN`
+  and `SYS_PTRACE` and without Docker's AppArmor profile. That is much less
+  than `--privileged` (no devices, no kernel modules, Docker's system call
+  filter stays), but `SYS_ADMIN` is broad and the container shares the
+  server's kernel. A machine of its own is the stronger arrangement.
 - Backups are not encrypted. Protecting a backup that leaves the host is the
   operator's job.

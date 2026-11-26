@@ -1,6 +1,10 @@
 [![FortisNet](assets/fortisnet-lockup-black.svg#gh-light-mode-only)](https://fortisnet.io)
 [![FortisNet](assets/fortisnet-lockup.svg#gh-dark-mode-only)](https://fortisnet.io)
 
+> *People and AI agents will work across borders, services and networks.
+> They need a shared foundation for identity, resources, value and
+> verifiable results. FortisNet is building toward that foundation.*
+
 # FortisNet Node OS
 
 The operating system for FortisNet nodes: a minimal Alpine-based image with
@@ -64,7 +68,9 @@ can also [build them yourself](#building).
 
 ```sh
 docker run -d --name fortis-node --restart unless-stopped \
-  --privileged --init --stop-timeout 240 \
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN --cap-add SYS_PTRACE \
+  --security-opt apparmor=unconfined --cgroupns private \
+  --init --stop-timeout 240 \
   -p 80:80 -p 443:443 \
   -v fortis-data:/var/lib/fortis \
   ghcr.io/fortisnet/node-os:latest
@@ -115,6 +121,9 @@ does it.
   watched before it replaces the running one. The database is backed up
   first, and the previous release is started again if the new one does not
   hold.
+- **The container is not privileged.** A container image asks Docker for
+  three named rights, not for `--privileged`: it cannot reach the server's
+  disks or devices, load kernel modules or set the clock.
 - **The node has no privileges.** It runs in its own container as an
   ordinary user, with no capabilities, a read-only filesystem, memory and
   process limits and a system call filter. The orchestrator owns the public
@@ -136,6 +145,95 @@ does it.
   and the images are scanned for known vulnerabilities every week.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Built in public
+
+"Built in public" means two things. Every file you can download was made by
+GitHub's computers from the source in this repository, not on somebody's
+laptop. And you do not have to believe that: you can check it yourself.
+
+### Three ideas you need
+
+| Idea | In one sentence |
+| --- | --- |
+| **Hash** | A short fingerprint of a file (here SHA-256). Change one byte of the file and the fingerprint is completely different, so two files with the same hash are the same file |
+| **Signature** | A proof made with a *private* key that anyone can check with the matching *public* key. Only the holder of the private key can make it; checking needs no secret |
+| **Provenance** | A signed statement by GitHub itself: "this file, with this hash, was built by this workflow, from this commit of this repository" |
+
+### From a change to a download
+
+```mermaid
+flowchart TD
+    A["1. A change is proposed<br/>as a pull request"] --> B["2. The gate<br/>two compilers, every test,<br/>sanitizers, fuzzing, four analysers"]
+    B --> C["3. The orchestrator is compiled<br/>on GitHub, once for each<br/>processor family"]
+    N["The signed node release<br/>pinned by its hash"] --> D
+    C --> D["4. The three images are assembled<br/>from pinned Alpine packages"]
+    D --> E["5. Each container image is started<br/>and must serve a node over HTTPS"]
+    E --> F["6. After the merge: published<br/>with checksums, provenance,<br/>signatures and a software list"]
+```
+
+1. **A change is proposed.** A change reaches `main` as a pull request
+   that everyone can read.
+2. **The gate runs** ([docs/development.md](docs/development.md)). The code
+   is built with two different compilers and every test must pass with
+   both, then again with tools that catch memory errors while the tests
+   run. The parsers are fed hundreds of thousands of random inputs. Four analysers read
+   the code. One failure stops everything.
+3. **The orchestrator is compiled** on GitHub's own machines, separately on
+   an Intel/AMD machine and on an ARM machine. The build checks that every
+   source file was compiled with the hardening options.
+4. **The images are assembled.** The exact version of every Alpine package
+   is written down in the repository
+   ([image/packages.x86_64.lock](image/packages.x86_64.lock)), so the same
+   commit always gives the same system. The node release that goes inside
+   is named by its hash in [image/node-release.conf](image/node-release.conf)
+   and its signature is checked before it is used.
+5. **The images are tried for real.** Each container image is started on a
+   machine of its own processor family and must get a certificate, install
+   the node and answer over HTTPS.
+6. **Only then is anything published,** and only from `main`. A pull
+   request cannot publish.
+
+### How the node release is signed
+
+A host runs a node release only when it is signed with the release key. The
+public half of that key is in this repository
+([image/release-public.pem](image/release-public.pem)) and inside every
+image. The private half is stored by GitHub as a secret that no person and
+no ordinary workflow can read.
+
+```mermaid
+flowchart LR
+    U["A node release is uploaded<br/>as a draft"] --> K["GitHub checks it<br/>hashes, processor, size"]
+    K --> P{"A maintainer reads<br/>what will be signed<br/>and approves"}
+    P --> S["GitHub signs it<br/>with the release key"]
+    S --> R["A pull request pins<br/>its hash for the images"]
+```
+
+Only one workflow may use the key
+([sign-node-release.yml](.github/workflows/sign-node-release.yml)), it waits
+for a person to approve each signing, and the job that holds the key does
+nothing but sign two small text files that an earlier job already checked.
+
+### Check it yourself
+
+| What you want to know | How to check |
+| --- | --- |
+| The download arrived intact | `sha256sum -c SHA256SUMS --ignore-missing` |
+| It was built by this repository's workflow, from a commit you can read | `gh attestation verify FILE --repo FortisNet/node-os` |
+| The same, without GitHub's tools | `cosign verify-blob` and `cosign verify` ([docs/releasing.md](docs/releasing.md#checking-a-download)) |
+| What software is inside | The `.spdx.json` file beside each image |
+| Which commit, orchestrator and node a running host has | `cat /etc/fortis-image` on the host |
+
+### What is not built in public yet
+
+The node program itself. Today a maintainer compiles it and uploads it;
+GitHub then checks it against its description and signs it after approval,
+as above. So you can verify *which* node release an image contains and that
+the release key signed it, but not yet *how it was compiled*. Its source
+and its build are moving to
+[FortisNet/node](https://github.com/FortisNet/node), where it will be built
+the same way as everything here.
 
 ## Operating a host
 
@@ -186,9 +284,9 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
 - **A public store for node updates.** The images carry a signed node
   release, but there is no public store yet that running hosts fetch newer
   ones from.
-- **The node is not built in public.** GitHub signs the node release
-  ([docs/releasing.md](docs/releasing.md#the-node-release-inside-the-images)),
-  but it is still built on a maintainer's computer.
+- **The node program is not compiled in public yet.** Everything else is
+  ([Built in public](#built-in-public)); the node's own source and build
+  move to [FortisNet/node](https://github.com/FortisNet/node) next.
 - **The disk image on a real cloud.** See
   [Where it has been tried](#where-it-has-been-tried).
 - **Updating the system itself.** The node is updated by the orchestrator.
@@ -198,9 +296,12 @@ make release VERSION=1.2.3     # the orchestrator for x86-64 and ARM64, into dis
   mode.
 - **HTTPS before the node is up.** The status page is served over plain HTTP
   until the certificate is issued and the node runs.
-- **Containers need `--privileged`.** A smaller set of rights has not been
-  worked out.
-- **ARM disk image.** ARM is a container image only.
+- **Containers still get `SYS_ADMIN`.** It is far less than `--privileged`,
+  but it is the broadest single right Linux has. Starting the node without
+  it needs user namespaces, which is not done.
+- **No bootable image for ARM machines.** On an ARM server, use the
+  container image with Docker. The disk image that a cloud can boot
+  directly exists for x86-64 (Intel and AMD) only.
 - **The sandbox manager** in [sandbox/](sandbox) is not part of the images.
 
 ## Contributing

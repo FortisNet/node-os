@@ -358,7 +358,9 @@ and the kernel modules, which a container cannot use. Both carry the same
 ```sh
 docker load -i fortis-node-os-x86_64-COMMIT.docker.tar.gz    # the aarch64 file on an ARM server
 docker run -d --name fortis-node --restart unless-stopped \
-  --privileged --init --stop-timeout 240 \
+  --cap-add SYS_ADMIN --cap-add NET_ADMIN --cap-add SYS_PTRACE \
+  --security-opt apparmor=unconfined --cgroupns private \
+  --init --stop-timeout 240 \
   -p 80:80 -p 443:443 \
   -v fortis-data:/var/lib/fortis \
   fortis-node-os:COMMIT-x86_64          # or COMMIT-aarch64 on an ARM server
@@ -367,7 +369,11 @@ docker logs -f fortis-node
 
 | Option | Why |
 | --- | --- |
-| `--privileged` | The orchestrator starts the node in a container of its own with `crun`, which needs namespaces, mounts and control groups. The node itself still runs without any privilege, as user 10001, under its system call filter |
+| `--cap-add SYS_ADMIN` | The orchestrator starts the node in a container of its own with `crun`, which makes namespaces and mounts, and it makes the container's own control groups writable. The node itself still runs without any privilege, as user 10001, under its system call filter |
+| `--cap-add NET_ADMIN` | `crun` switches on the loopback interface of the node's own network namespace. It applies to the container's network only, not the server's |
+| `--cap-add SYS_PTRACE` | Before trusting a running node, the orchestrator hashes the program that process is really running (`/proc/PID/exe`), which Linux allows across users only with this right |
+| `--security-opt apparmor=unconfined` | On servers with AppArmor, Docker's default profile forbids every mount, including the ones `crun` makes for the node |
+| `--cgroupns private` | The container gets control groups of its own, which is what makes handing them to it safe. It is Docker's default on current systems; saying so makes it certain |
 | `--init` | Collects processes that end, the job the init system has on a machine |
 | `--stop-timeout 240` | Gives the node time to close its database when the container is stopped |
 | `-p 80:80 -p 443:443` | The certificate authority's check and the node. The health port is not published |
@@ -400,9 +406,14 @@ What differs between the two, and who does the job instead:
 | Operator access | SSH as `alpine`, `doas fortis status` | `docker exec fortis-node fortis status`, `docker logs fortis-node` |
 | Log of the orchestrator | `/var/log/fortis-orchestrator.log` | `docker logs` |
 
-A machine of its own remains the stronger arrangement: in a container the
-orchestrator is the administrator of a privileged container, which is close
-to being the administrator of the server.
+The container does **not** run with `--privileged`. Compared with that, it
+has no access to the server's disks and devices, keeps Docker's system call
+filter, and lacks the rights to load kernel modules, set the clock or
+reboot. `--privileged` still works, for a runtime where the options above
+are not available.
+
+A machine of its own remains the stronger arrangement: `SYS_ADMIN` is the
+broadest single right Linux has, and a container shares the server's kernel.
 
 ## The boot report
 

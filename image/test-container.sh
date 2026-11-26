@@ -27,6 +27,7 @@ name=fortis-host-test-$$
 authority=$name-authority
 node=$name-node
 shared=$name-shared
+rights='--cap-add SYS_ADMIN --cap-add NET_ADMIN --cap-add SYS_PTRACE --security-opt apparmor=unconfined --cgroupns private'
 
 docker image inspect "$image" >/dev/null 2>&1 || { echo "No such image here: $image" >&2; exit 2; }
 wanted=$(docker image inspect "$image" --format '{{.Architecture}}')
@@ -72,7 +73,9 @@ directory=$(docker exec "$authority" cat /shared/directory)
 ca=$(docker exec "$authority" cat /shared/ca)
 port=$(docker port "$authority" 443/tcp | sed -n 's/.*://p' | head -n 1)
 
-docker run -d --name "$node" --network "container:$authority" --privileged --init --stop-timeout 240 \
+# The rights the README tells people to give it; FORTIS_TEST_RIGHTS tries others.
+# shellcheck disable=SC2086
+docker run -d --name "$node" --network "container:$authority" ${FORTIS_TEST_RIGHTS:-$rights} --init --stop-timeout 240 \
   -v "$shared:/shared:ro" \
   -e FORTIS_HTTPS_IP=127.0.0.1 -e FORTIS_NATIVE_ACME_LOOPBACK=1 \
   -e "FORTIS_NATIVE_ACME_DIRECTORY=$directory" -e "FORTIS_NATIVE_TLS_CA=$ca" \
