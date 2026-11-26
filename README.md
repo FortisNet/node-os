@@ -1,3 +1,12 @@
+<p>
+  <a href="https://fortisnet.io">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/fortisnet-lockup.svg">
+      <img src="assets/fortisnet-lockup-black.svg" alt="FortisNet" width="260">
+    </picture>
+  </a>
+</p>
+
 # FortisNet Node OS
 
 The operating system for FortisNet nodes: a minimal Alpine-based image with
@@ -211,3 +220,12 @@ merged, and [GOVERNANCE.md](GOVERNANCE.md) who decides. Please read the
 ## License
 
 [Apache License 2.0](LICENSE). Third-party notices are in [NOTICE](NOTICE).
+
+---
+
+<p align="center">
+  <a href="https://fortisnet.io">FortisNet</a> |
+  <a href="https://blockchain.fortisnet.io">Blockchain</a> |
+  <a href="https://token.fortisnet.io">XFN</a> |
+  <a href="https://wallet.fortisnet.io">Wallet</a>
+</p>
