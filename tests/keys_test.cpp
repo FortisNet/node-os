@@ -15,12 +15,17 @@
 #include <mbedtls/sha256.h>
 #include <mbedtls/sha512.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <pthread.h>
+#include <sys/mman.h>
 #include <unistd.h>
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <sstream>
@@ -412,6 +417,87 @@ void CloneEvidence() {
          "a checkpoint of another machine is not");
 }
 
+// The peak stack an operation uses: run it on a thread whose stack is filled
+// with a pattern, then find the deepest byte that changed. Stacks grow down,
+// so that is the lowest changed address. It counts the thread's own start-up
+// too (its descriptor and thread-local storage), so it overestimates a little.
+size_t PeakStack(const std::function<void()>& work) {
+  constexpr size_t kProbe = 16 * 1024 * 1024;  // far more than anything here uses
+  constexpr uint8_t kPattern = 0xA5;
+  void* memory = ::mmap(nullptr, kProbe, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+  if (memory == MAP_FAILED) return kProbe;
+  std::memset(memory, kPattern, kProbe);
+  struct Job {
+    const std::function<void()>* work;
+  } job{&work};
+  pthread_attr_t attributes;
+  pthread_t thread;
+  bool ran = ::pthread_attr_init(&attributes) == 0 && ::pthread_attr_setstack(&attributes, memory, kProbe) == 0 &&
+             ::pthread_create(
+                 &thread, &attributes,
+                 [](void* argument) -> void* {
+                   (*static_cast<Job*>(argument)->work)();
+                   return nullptr;
+                 },
+                 &job) == 0;
+  if (ran) ran = ::pthread_join(thread, nullptr) == 0;
+  (void)::pthread_attr_destroy(&attributes);
+  const auto* bytes = static_cast<const uint8_t*>(memory);
+  size_t untouched = 0;
+  while (untouched < kProbe && bytes[untouched] == kPattern) ++untouched;
+  (void)::munmap(memory, kProbe);
+  return ran ? kProbe - untouched : kProbe;
+}
+
+#if defined(__SANITIZE_ADDRESS__)
+constexpr bool kSanitized = true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr bool kSanitized = true;
+#else
+constexpr bool kSanitized = false;
+#endif
+#else
+constexpr bool kSanitized = false;
+#endif
+
+// Every operation must use at most half the stack this code promises it
+// needs (kVerifyStack, kSigningStack), so a change that needs more fails here,
+// on every compiler, instead of crashing a thread on a host. With
+// AddressSanitizer, which makes frames larger, it must still fit.
+void StackUse() {
+  const auto message = Text("stack use");
+  struct Measured {
+    std::string what;
+    size_t peak;
+    size_t limit;
+  };
+  std::vector<Measured> all;
+  // SQIsign takes a different path every time: keep the deepest of several runs.
+  constexpr int kRuns = 5;
+  for (const auto algorithm : kAlgorithms) {
+    size_t keygen = 0, sign = 0, verify = 0;
+    for (int run = 0; run < kRuns; ++run) {
+      Pair pair;
+      keygen = std::max(keygen, PeakStack([&] { pair = Generate(algorithm); }));
+      Bytes sig;
+      sign = std::max(sign, PeakStack([&] { sig = SignLabelled(algorithm, pair.secret, "stack", message); }));
+      bool ok = false;
+      verify = std::max(verify, PeakStack([&] { ok = Verify(algorithm, pair.pub, "stack", message, kStamp, sig); }));
+      Expect(ok, "a signature made on a measured stack verifies");
+    }
+    const std::string name(Name(algorithm));
+    all.push_back({name + " key generation", keygen, kSigningStack});
+    all.push_back({name + " signing", sign, kSigningStack});
+    all.push_back({name + " verification", verify, kVerifyStack});
+  }
+  for (const auto& m : all) {
+    const size_t allowed = kSanitized ? m.limit : m.limit / 2;
+    std::printf("stack: %-36s %7zu bytes (allowed %zu)\n", m.what.c_str(), m.peak, allowed);
+    Expect(m.peak <= allowed, (m.what + " fits its stack").c_str());
+  }
+}
+
 int Vectors() {
   std::string line;
   size_t number = 0, passed = 0;
@@ -464,6 +550,7 @@ int main(int argc, char** argv) {
     Pq2Compatibility();
     SigningLogs();
     CloneEvidence();
+    StackUse();
   } catch (const std::exception& e) {
     std::fprintf(stderr, "keys_test: %s\n", e.what());
     return 1;

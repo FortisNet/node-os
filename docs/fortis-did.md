@@ -953,9 +953,12 @@ What `fortis-node` does to sign with its identity, in order:
 8. **Handle refusals.** Every call throws `std::runtime_error` on a refusal
    or a broken connection. `busy` means wait and try again; a broken channel
    is closed, and the thread opens a new one. Nothing is retried for you.
-9. **Give verifying threads enough stack.** `Verify` needs about 128 KiB of
-   stack (section 12, [key_client.h](../keys/client/key_client.h)); use
-   threads of at least 256 KiB.
+9. **Give verifying threads enough stack.** `Verify` uses up to about 100 KB
+   of stack (section 13.1). Start every thread that verifies with at least
+   `kVerifyStack` (512 KiB, in [key_algorithms.h](../keys/client/key_algorithms.h)),
+   set with `pthread_attr_setstacksize`. Never rely on the C library's
+   default: musl, which the node's release builds use, gives a new thread
+   128 KiB.
 
 A whole program that does all of this is
 [tests/key_client_tool.cpp](../tests/key_client_tool.cpp), which the tests
@@ -1070,9 +1073,31 @@ StampedSignature Client::Sign(Algorithm algorithm, std::string_view label, View 
 ### 13.1 Threads
 
 - One thread accepts connections on each socket.
-- Each connection gets its own thread, with a 2 MiB stack whatever the C
-  library's default (SQIsign signing does not fit in musl's 128 KiB). It reads
-  a request, does it, and writes the reply.
+- Each connection gets its own thread, with a stack of `kSigningStack` (2 MiB)
+  whatever the C library's default. It reads a request, does it, and writes
+  the reply.
+- **Stacks are set, never left to a default.** The algorithms keep large
+  values on the stack. A new thread gets 8 MiB from glibc but only 128 KiB
+  from musl, which the images use, and SQIsign signing needs more than that.
+  [tests/keys_test.cpp](../tests/keys_test.cpp) measures the deepest stack
+  every operation reaches (it fills a thread's stack with a pattern and finds
+  the deepest byte that changed) and fails if any comes within half of its
+  limit:
+
+  | Operation | Deepest stack measured | Limit |
+  | --- | ---: | ---: |
+  | SQIsign-V signing | 195 KB | `kSigningStack`, 2 MiB |
+  | ML-DSA-87 signing | 130 KB | `kSigningStack`, 2 MiB |
+  | Key generation, any algorithm | up to 111 KB | `kSigningStack`, 2 MiB |
+  | ML-DSA-87 verification | 100 KB | `kVerifyStack`, 512 KiB |
+  | SQIsign-V verification | 86 KB | `kVerifyStack`, 512 KiB |
+  | secp256k1, anything | up to 10 KB | |
+
+  The highest of Clang and GCC on glibc, and GCC on musl (the release
+  build), all at their release optimization. The test runs on every one of
+  them, each time; AddressSanitizer adds about 2 KB. The first start makes keys on the
+  main thread, whose stack is the process's limit (`ulimit -s`): the service
+  refuses to start when that is below 2 MiB.
 - At most 64 connections are served at once; more are closed unanswered.
 - Once a request's header has arrived, its body must follow within 60
   seconds, so a stalled client cannot hold a thread and its buffer for ever.

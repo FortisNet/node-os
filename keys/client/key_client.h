@@ -8,9 +8,10 @@
 // leaves the channel usable; a failure of the stream itself closes it, and
 // every later call on it fails: open a new channel then.
 //
-// Verify() keeps large values on the stack: ML-DSA-87 and SQIsign-V
-// verification crash with a 64 KiB stack and were measured to work with
-// 128 KiB. Call it from threads with at least 256 KiB of stack.
+// Verify() keeps large values on the stack: up to about 100 KB was measured
+// (ML-DSA-87; SQIsign-V about 86 KB). Call it from a thread with at least
+// kVerifyStack (key_algorithms.h, 512 KiB), set with pthread_attr_setstacksize:
+// never rely on a C library's default for new threads (musl: 128 KiB).
 #include "key_algorithms.h"
 #include "key_log.h"
 

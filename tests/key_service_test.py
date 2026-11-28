@@ -11,6 +11,7 @@ identity survives a restart, and that a damaged or unsafe store is refused.
 """
 import hashlib
 import os
+import resource
 import pathlib
 import socket
 import stat
@@ -37,9 +38,11 @@ class Service:
         self.log = root / 'keyd.log'
         self.process = None
 
-    def start(self, wait=True):
+    def start(self, wait=True, stack_limit=None):
         log = open(self.log, 'ab')
-        self.process = subprocess.Popen([KEYD, str(self.store), str(self.sockets)], stdout=log, stderr=log)
+        limit = (lambda: resource.setrlimit(resource.RLIMIT_STACK, (stack_limit, stack_limit))) if stack_limit else None
+        self.process = subprocess.Popen([KEYD, str(self.store), str(self.sockets)], stdout=log, stderr=log,
+                                        preexec_fn=limit)
         if not wait:
             return self.process.wait(timeout=120)
         deadline = time.monotonic() + 120  # the first start makes SQIsign keys
@@ -235,6 +238,11 @@ def main():
             check(service.start(wait=False) == 1, 'a damaged signing.log stops the service')
             check('signing.log is damaged at entry 2' in service.log.read_text(), 'and says which entry')
             signing_log.write_bytes(entries)
+
+            # Key generation runs on the main thread, whose stack is the process's
+            # limit: a limit below what it needs is refused at start, not a crash later.
+            check(service.start(wait=False, stack_limit=1024 * 1024) == 1, 'a 1 MiB stack limit stops the service')
+            check('stack limit (ulimit -s) is below' in service.log.read_text(), 'and says why')
 
             # A missing identity is never replaced by a new one.
             os.rename(path, root / 'identity.key.saved')

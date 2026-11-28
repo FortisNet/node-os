@@ -49,6 +49,17 @@ bool ValidLabel(std::string_view label) noexcept;
 /// The largest message the key service signs in one request.
 inline constexpr size_t kMessageMax = 1024 * 1024;
 
+/** The stack a thread needs (docs/fortis-did.md, section 13.1). These
+ * algorithms keep large values on the stack, and a C library's default for a
+ * new thread may be too small: musl gives 128 KiB, glibc usually 8 MiB. Give
+ * threads these sizes yourself (pthread_attr_setstacksize), never rely on the
+ * default. tests/keys_test.cpp measures what every operation really uses and
+ * fails if it comes within half of these. */
+/// For a thread that calls Verify(), or any other function of key_log.h.
+inline constexpr size_t kVerifyStack = 512 * 1024;
+/// For a thread that generates keys or signs: the key service's threads.
+inline constexpr size_t kSigningStack = 2 * 1024 * 1024;
+
 /// "fortis/app/" + label: the ML-DSA-87 context string, and the domain the others are tagged with.
 Bytes Domain(std::string_view label);
 

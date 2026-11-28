@@ -67,6 +67,7 @@ int Parallel(Client& keys, int count) {
   channels.reserve(static_cast<size_t>(count));
   for (int i = 0; i < count; ++i) channels.push_back(keys.OpenChannel());
   std::vector<int> ok(static_cast<size_t>(count), 0);
+  std::vector<StampedSignature> signatures(static_cast<size_t>(count));
   const auto start = std::chrono::steady_clock::now();
   std::vector<std::thread> threads;
   threads.reserve(static_cast<size_t>(count));
@@ -74,12 +75,21 @@ int Parallel(Client& keys, int count) {
     threads.emplace_back([&, i] {
       try {
         const std::string text = "parallel " + std::to_string(i);
-        const auto sig = channels[static_cast<size_t>(i)].Sign(Algorithm::SqiSignV, "test-parallel", Text(text));
-        ok[static_cast<size_t>(i)] =
-            Verify(Algorithm::SqiSignV, pub, "test-parallel", Text(text), sig.stamp, sig.signature) ? 1 : 0;
+        // Only the request here: these threads have the C library's default stack,
+        // and verifying needs kVerifyStack (key_algorithms.h). It is done below.
+        signatures[static_cast<size_t>(i)] =
+            channels[static_cast<size_t>(i)].Sign(Algorithm::SqiSignV, "test-parallel", Text(text));
+        ok[static_cast<size_t>(i)] = 1;
       } catch (const std::exception& e) { std::fprintf(stderr, "thread %d: %s\n", i, e.what()); }
     });
   for (auto& thread : threads) thread.join();
+  for (int i = 0; i < count; ++i) {
+    const std::string text = "parallel " + std::to_string(i);
+    const auto& sig = signatures[static_cast<size_t>(i)];
+    if (ok[static_cast<size_t>(i)] &&
+        !Verify(Algorithm::SqiSignV, pub, "test-parallel", Text(text), sig.stamp, sig.signature))
+      ok[static_cast<size_t>(i)] = 0;
+  }
   const auto ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
   int good = 0;

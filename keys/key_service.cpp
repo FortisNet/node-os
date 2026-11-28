@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <semaphore>
 #include <string>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -155,8 +156,9 @@ bool TakeChannel() {
 }
 
 // Every channel thread gets this much stack, whatever the C library's
-// default: SQIsign signing needs more than 128 KiB, musl's default.
-constexpr size_t kThreadStack = 2 * 1024 * 1024;
+// default: SQIsign signing needs more than musl's 128 KiB (kSigningStack,
+// measured by tests/keys_test.cpp).
+constexpr size_t kThreadStack = kSigningStack;
 
 struct Channel {
   const Service* service;
@@ -320,6 +322,12 @@ int Run(const fs::path& store_folder, const fs::path& socket_folder) {
   const auto signers = static_cast<std::ptrdiff_t>(cores == 0 ? 1 : (cores > 1024 ? 1024 : cores));
   g_signers.release(signers - 1);  // it starts with one
 
+  // The first start makes and checks keys on this thread, whose stack is the
+  // process's limit (ulimit -s), not kThreadStack: refuse a limit that is too small.
+  if (rlimit stack{};
+      ::getrlimit(RLIMIT_STACK, &stack) == 0 && stack.rlim_cur != RLIM_INFINITY && stack.rlim_cur < kSigningStack)
+    throw std::runtime_error("the stack limit (ulimit -s) is below " + std::to_string(kSigningStack / 1024) +
+                             " KiB, which key generation needs");
   const auto store = KeyStore::Open(store_folder);
   const auto& identity = store.identity();
   if (store.new_machine()) LogInfo("keys", "created machine key %s", store.machine().id.c_str());
