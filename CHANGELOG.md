@@ -12,6 +12,18 @@ itself and have their own history in the node's repository.
 
 ### Added
 
+- The key service, `fortis-keyd`, for the node's post-quantum identity
+  (Fortis DID, [docs/fortis-did.md](docs/fortis-did.md)). On its first start
+  it creates a `did:fortis:pq2` identity with ML-DSA-87, SQIsign-V and
+  secp256k1 keys, and serves labelled signatures to the node over a Unix
+  socket without ever showing it a key. Every signature carries the key
+  service's stamp and is written to a hash-chained signing log first, so
+  other nodes can check signatures against the log and prove a cloned
+  machine. It comes with a C++23 client library
+  for the node, and the ML-DSA-87 and SQIsign-V reference code, copied
+  unchanged and checked against NIST's and the SQIsign team's known answers.
+  **It is not in the images yet**: the orchestrator does not start it, and
+  the node does not use it.
 - Automatic updates of the node. A host that is given a release store
   (`FORTIS_NATIVE_RELEASE_STORE`) finds, downloads, verifies and installs
   the newest node release it can run by itself: on first start, before the

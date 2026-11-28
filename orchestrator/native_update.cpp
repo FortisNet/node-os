@@ -35,6 +35,8 @@ struct Settings {
   std::map<std::string, std::string> values, environment;
   fs::path config, root, data, backups, env, key, proc, sandbox_control, runtime_state;
   fs::path certificates, challenges, acme_state, recovery_key, fetch_state, baked_release;
+  // The key service's store: the pages show the public part of its identity.
+  fs::path keys_state;
   // Services asked for this host's public address when its own interface
   // shows a private one. Empty when switched off.
   std::vector<std::string> address_lookup;
@@ -187,6 +189,8 @@ Settings Configure(const fs::path& path, bool stopping) {
   c.store = c.Value("FORTIS_NATIVE_RELEASE_STORE");
   c.fetch_state = c.Value("FORTIS_NATIVE_FETCH_STATE", "/var/lib/fortis-fetch");
   SafePath(c.fetch_state);
+  c.keys_state = c.Value("FORTIS_NATIVE_KEYS_STATE", "/var/lib/fortis/keys");
+  SafePath(c.keys_state);
   c.fetch_user = static_cast<unsigned>(Integer(c.Value("FORTIS_NATIVE_FETCH_USER", "10004"), 65534));
   c.store_loopback = Integer(c.Value("FORTIS_NATIVE_RELEASE_STORE_LOOPBACK", "0"), 1) != 0;
   Require(c.fetch_user >= 1000 && c.fetch_user != 10001, "invalid release store settings");
@@ -771,6 +775,33 @@ void Controller::Identity(const Release& release) {
  * given, names what the orchestrator is doing ("updating", "recovering");
  * otherwise it is read off the host. Reads only local files and the node's
  * loopback health port. */
+// The public part of the node's identity, as the key service publishes it
+// (docs/fortis-did.md, section 9). Only shown, never trusted for anything:
+// a file that is missing, too long or not exactly two well-formed values
+// leaves the identity out of the pages.
+void ReadIdentity(const fs::path& path, HostFacts& facts) {
+  const auto hex = [](std::string_view text, size_t length) {
+    return text.size() == length && std::all_of(text.begin(), text.end(), [](char c) {
+             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+           });
+  };
+  if (!fs::is_regular_file(path)) return;
+  try {
+    const auto fields = KeyValues(Read(path, 512));
+    const auto did = fields.at("did"), machine = fields.at("machine");
+    constexpr std::string_view kPrefix = "did:fortis:pq2:";
+    if (fields.size() != 2 || !did.starts_with(kPrefix) || !hex(std::string_view(did).substr(kPrefix.size()), 128) ||
+        !hex(machine, 32))
+      return;
+    facts.did = did;
+    facts.machine_id = machine;
+  } catch (const std::exception&) {
+    // Unreadable: the pages say the identity is not known.
+    facts.did.clear();
+    facts.machine_id.clear();
+  }
+}
+
 HostFacts Controller::Facts(std::string_view state) {
   using Health = HealthCheck::State;
   HostFacts facts;
@@ -795,6 +826,7 @@ HostFacts Controller::Facts(std::string_view state) {
     } catch (const std::exception&) { facts.node_version = "unreadable"; }
   }
   facts.runs_in = HostKind();
+  ReadIdentity(c_.keys_state / "identity.public", facts);
   facts.orchestrator.push_back({"Orchestrator",
                                 facts.runs_in == "container"
                                     ? "Supervising this host. It runs in a container."

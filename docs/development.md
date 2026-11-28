@@ -5,12 +5,212 @@
 | Folder | What it holds |
 | --- | --- |
 | [orchestrator/](../orchestrator) | One C++ program with several modes: it installs, starts, updates and recovers the node, owns the public ports, obtains certificates and serves a page when no node does |
+| [keys/](../keys) | The key service, `fortis-keyd`, which holds the node's identity keys, and in [keys/client/](../keys/client) the library the node uses to reach it ([fortis-did.md](fortis-did.md)). Not in the images yet |
+| [third_party/crypto/](../third_party/crypto) | ML-DSA-87 and SQIsign-V reference code, copied unchanged, only the files the key service links; [MANIFEST.json](../third_party/crypto/MANIFEST.json) pins each by hash |
 | [sandbox/](../sandbox) | The sandbox manager for running untrusted jobs under gVisor. Not part of the images yet |
 | [lib/](../lib) | Source files copied from the node: an HTTPS client, a JSON reader and small support headers. `ORIGIN.json` records where each came from |
 | [image/](../image) | Builds the disk and container images. [image/README.md](../image/README.md) lists exactly what is in them and why |
 | [assets/](../assets) | The design of the page the orchestrator serves: one HTML file, the logo and one image |
 | [tests/](../tests) | Tests of the above, including a stand-in certificate authority and a stand-in release store |
 | [tools/](../tools) | Build and release tools: the toolchain images, the hardening audit, the release publisher |
+
+## How the orchestrator runs
+
+The orchestrator is one program, `native-controller`, built from the files
+in `ORCHESTRATOR_SOURCES` in the [Makefile](../Makefile) and installed as
+`/usr/libexec/fortis/native-controller`. Its `main()` is at the end of
+[orchestrator/native_update.cpp](../orchestrator/native_update.cpp).
+
+### One program, many modes
+
+It is always started as `native-controller CONFIG ACTION [ARGUMENT]`, where
+`CONFIG` is `/etc/fortis/orchestrator.conf`. The action chooses what it is:
+
+| Action | What it does | Runs as | Where |
+| --- | --- | --- | --- |
+| `first-boot` | Lays out a new host and writes its settings, once | root | `FirstBoot`, [first_boot.cpp](../orchestrator/first_boot.cpp) |
+| `supervise` | The orchestrator proper: a loop that runs while the host is up | root | `main`, [native_update.cpp](../orchestrator/native_update.cpp) |
+| `keeper` | Starts the node in its container through `crun` and holds its listening sockets | root, started by `supervise` | `RunKeeper`, [node_keeper.cpp](../orchestrator/node_keeper.cpp) |
+| `fetch-worker` | Downloads release lists and releases | its own unprivileged user | `FetchWorker`, [native_update.cpp](../orchestrator/native_update.cpp) |
+| `certificate-worker` | Asks Let's Encrypt for a certificate | its own unprivileged user | `CertificateWorker`, [native_update.cpp](../orchestrator/native_update.cpp) and [acme_client.cpp](../orchestrator/acme_client.cpp) |
+| `page-server` | Serves the status page while no node runs | in a container of its own | `RunPageServer`, [page_server.cpp](../orchestrator/page_server.cpp) |
+| `status`, `update`, `fetch`, `releases`, `backup`, `restore`, `stop`, `start`, `recover`, `retry`, `adopt`, `certificates` | One command, then exit: what `fortis ...` runs for an administrator | root | `Controller::Action`, [native_update.cpp](../orchestrator/native_update.cpp) |
+
+The helpers are this same program run again in another mode. That is how
+the rule "the orchestrator runs no other program, except `crun`" holds: a
+worker that talks to the network is the orchestrator itself, re-run after
+`fork()`, which gives up root (`setuid` to the worker's user) before it does
+anything else. What a worker brings back is checked by the side that stayed
+root.
+
+### From boot to the loop
+
+On a machine:
+
+```text
+boot
+ └─ OpenRC service fortis-native                  image/files/fortis-native.openrc
+     ├─ start_pre: native-controller CONFIG first-boot     a new host only
+     └─ supervise-daemon, which restarts what it runs if it stops:
+         run-native-service.sh CONFIG                     image/files/run-native-service.sh
+          └─ manage-native-node.sh CONFIG supervise       image/files/manage-native-node.sh
+              └─ exec native-controller CONFIG supervise
+```
+
+In a container there is no OpenRC.
+[container-start.sh](../image/files/container-start.sh) prepares the control
+groups, runs `native-controller CONFIG first-boot`, then
+`exec run-native-service.sh CONFIG`, as above.
+
+The two scripts only choose the program (`FORTIS_NATIVE_CONTROLLER` points
+them at another one, as the tests do) and set `FORTIS_NATIVE_WAIT_LOCK=1`.
+The `fortis` command an administrator types ([image/files/fortis](../image/files/fortis))
+runs `manage-native-node.sh` too, with a one-off action: `fortis status` is
+`native-controller /etc/fortis/orchestrator.conf status`.
+
+### The supervise loop
+
+```cpp
+while (!interrupted) {
+  Controller controller(Configure(config, false));  // the settings, read again every round
+  controller.Action("tick");                        // one round of work
+  // five crashes of the node within a minute each, or five failed rounds: stop, for an operator
+  Pause(...);                                       // a second; five when the data must be on a mount
+}
+```
+
+Each tick does what the host needs at that moment:
+
+- **The node.** Starts it if it is not running, through the keeper. Watches
+  its health, and undoes an update that does not hold.
+- **The certificate.** Obtains and renews it, through `certificate-worker`.
+- **Releases.** When a release store is set, looks for releases, downloads
+  and verifies them (through `fetch-worker`), and installs one after a
+  backup.
+- **The pages.** Writes the five page files (`PublishPages`,
+  [pages.cpp](../orchestrator/pages.cpp)); the facts on them are gathered
+  by `Controller::Facts`.
+
+A failed tick costs one round: the loop catches it and tries again. If the
+whole process stops, OpenRC's `supervise-daemon` (or, in a container,
+Docker's restart policy) starts it again.
+
+### Where to start reading
+
+- **To change what a command does:** `Controller::Action`.
+- **To change what a tick does:** the `tick` branch at the end of the same
+  function.
+- **To change a page or the JSON:** [pages.cpp](../orchestrator/pages.cpp);
+  the facts it shows come from `Controller::Facts`.
+- **To change how the node is started:** [node_keeper.cpp](../orchestrator/node_keeper.cpp),
+  including its container description and system call filter.
+- **To change the settings:** `Configure` in [native_update.cpp](../orchestrator/native_update.cpp)
+  reads them, and [first_boot.cpp](../orchestrator/first_boot.cpp) writes
+  their defaults on a new host.
+
+## Things that are easy to get wrong
+
+Five things that look harmless and are not. Each says what it is, why it
+matters, and what to do.
+
+### 1. There is one program, not a set of services
+
+- **What.** The orchestrator, the keeper, the download and certificate
+  workers, the page server and every `fortis` command are all
+  `native-controller`, started with a different action
+  ([How the orchestrator runs](#how-the-orchestrator-runs)).
+- **Why it matters.** There is no separate certificate daemon or page server
+  program to find. A helper added as a new program breaks the rule that the
+  orchestrator runs no other program except `crun`.
+- **What to do.** Read the `if (action == ...)` lines of `main()` for the
+  complete list of modes. Add a helper as a new action that the program runs
+  of itself after `fork()`, and give up root first if it touches the network,
+  as `FetchWorker` does.
+
+### 2. The node lives in a sealed container and gets only what it is handed
+
+- **What.** The node runs under `crun` as an ordinary user: no capabilities,
+  a read-only filesystem, its own mount, process and IPC namespaces, and a
+  system call filter ([node_keeper.cpp](../orchestrator/node_keeper.cpp)).
+- **Why it matters.** It cannot see the host's files or sockets. "The node
+  reads a file under `/var/lib`" or "the node connects to a socket under
+  `/run`" fails, because inside its container those paths do not exist.
+- **What to do.** Hand the node an open file descriptor, as the listening
+  sockets are handed over (`crun --preserve-fds`, `FORTIS_LISTEN_FDS`), or
+  add an explicit mount to its container description. Either is part of
+  [the contract with the node](#the-contract-with-the-node), so it also needs
+  a new host interface number.
+
+### 3. The gate is the truth, and it runs only on Linux
+
+- **What.** The orchestrator does not compile on macOS (it uses Linux-only
+  parts of `struct stat`, such as `st_atim`). `make verify` runs everything
+  in a container on Ubuntu, and clang-tidy treats every warning as an error.
+  Its report counts only if no file changed while it ran.
+- **Why it matters.** A plain `make` failing on a Mac is not a bug in your
+  change. A change that builds and passes its tests can still fail the lint
+  stage: an empty `catch`, a `push_back` in a loop without `reserve`, `atoi`.
+  Editing any file, documentation included, while the gate runs wastes the
+  run: it ends with "an input file changed while the gate ran".
+- **What to do.** Format first with the gate's own `clang-format-18`, from
+  its container image. Run `python3 verify.py`, change nothing until it
+  ends, then check with `python3 verify.py --check-inputs`. Read
+  `build-verify/logs/STAGE.log` to see that your tests really ran, not only
+  that the stage says PASS.
+
+### 4. The gate uses glibc, the images use musl
+
+- **What.** The gate tests on Ubuntu with glibc. The images run Alpine with
+  musl, and release programs are built with their own flags
+  ([build-release.sh](../build-release.sh)).
+- **Why it matters.** The two differ where nobody looks:
+  - a thread's default stack is 8 MiB with glibc and 128 KiB with musl, and
+    SQIsign signing reaches about 195 KB. The key service therefore gives its
+    threads `kSigningStack` (2 MiB) itself, verifying threads need
+    `kVerifyStack` (512 KiB, both in
+    [key_algorithms.h](../keys/client/key_algorithms.h)), and
+    [tests/keys_test.cpp](../tests/keys_test.cpp) measures what every
+    operation uses ([fortis-did.md](fortis-did.md#131-threads), section 13.1).
+    The release build's `-Wl,-z,stack-size` must not be what keeps a thread
+    alive;
+  - Linux resets a Unix socket connection that is closed with unread data in
+    it, where macOS ends it cleanly;
+  - anything else that rests on a C library's default.
+
+  A change can pass the gate and fail on a real host.
+- **What to do.** Never rely on a C library default: set stack sizes,
+  timeouts and flags yourself. Treat a passing gate as necessary, not
+  enough: for anything that runs on a host, also run
+  [image/test-container.sh](../image/test-container.sh), which starts the
+  real Alpine image end to end.
+
+### 5. Some files are pinned: do not quietly change them
+
+- **What.** Several things are frozen on purpose, and checked:
+  - **[lib/](../lib)** holds copies of the node's files, each recorded in
+    `ORIGIN.json` ([The copies in lib/](#the-copies-in-lib)). A new file
+    there without an entry fails the gate.
+  - **Copied upstream code and test vectors** are kept byte for byte, each
+    pinned by its SHA-256 in a `MANIFEST.json` beside it, checked by a tool
+    in the gate. The license notices in
+    [third_party/native-runtime/](../third_party/native-runtime) are the
+    same kind of copy.
+  - **The images' Alpine packages** are pinned in
+    `image/packages.x86_64.lock` and `image/packages.aarch64.lock`. When
+    Alpine publishes an update, the image build stops until someone reviews
+    it ([Building the images](#building-the-images)).
+  - **The build's flags stamp** rebuilds every object when `CC`, `CXX`,
+    `CXXFLAGS`, `DEPENDENCY_CFLAGS` or `ORCHESTRATOR_VERSION` change, and
+    for nothing else. Changing `CPPFLAGS`, or another variable in the
+    [Makefile](../Makefile), leaves objects built with the old values.
+- **Why it matters.** "Fixing" a copied file, or adding a helper to `lib/`,
+  looks harmless and breaks the gate, or the promise that a copy is what its
+  upstream published. A stale object makes a test pass against old code.
+- **What to do.** Change your own code, never a copy. Put new shared code in
+  a folder of its own, not in `lib/`. After changing a build variable, run
+  `make clean`, or make the objects that use it depend on the Makefile, and
+  check in the build output that the compiler command really contains the
+  new flags.
 
 ## Building and testing
 
@@ -95,7 +295,10 @@ a very good reason.
 
 - **Small, and separate from the node.** This is the part that runs as
   administrator, so it is kept small enough to review. It builds from this
-  repository and Mbed TLS alone and includes nothing from the node.
+  repository and Mbed TLS alone and includes nothing from the node. The key
+  service is a separate program, under its own user, so the much larger
+  post-quantum code it needs never runs as administrator; it builds from this
+  repository, Mbed TLS and the unchanged copies in `third_party/crypto/`.
 - **The orchestrator runs no other program, except `crun`.** Signatures and
   hashes are checked with Mbed TLS, HTTPS is spoken by the client in `lib/`,
   and files are copied in-process. There is no shell, `curl`, `openssl` or
@@ -129,6 +332,9 @@ the new hash.
 What this repository and the node agree on is a contract, not shared code:
 
 - how listening sockets are handed to the node (`FORTIS_LISTEN_FDS`);
+- how the node reaches the key service (`FORTIS_KEYS_FD`) and the key
+  service's wire format and labelled signing ([fortis-did.md](fortis-did.md),
+  sections 9 to 11), once the orchestrator hands the connection over;
 - the layout of the certificate folder;
 - the node's health answers on its loopback port;
 - the signed release format (`manifest`, `manifest.sig`, `fortis-node`);

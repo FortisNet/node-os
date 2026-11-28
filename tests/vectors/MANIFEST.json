@@ -1,0 +1,19 @@
+{
+  "acvp": {
+    "commit": "975de31eb83d87039ec88934fdc47d8c312b892d",
+    "files": {
+      "ML-DSA-keyGen-FIPS204/internalProjection.json": "e67ee6540d40e11506c3c4e3b1f79fc1cefcd49820db99fc61f87cc8ba463baf",
+      "ML-DSA-sigGen-FIPS204/internalProjection.json": "72dcaf5f69853ca267ccd16af9cb40949786aca0fcfbf05d1ebeba132b93af22",
+      "ML-DSA-sigVer-FIPS204/internalProjection.json": "47cdd6314c7f746d02421ffcba89d4dbc7bb875ac49e07a029fdfc26fba55437"
+    },
+    "repository": "https://github.com/usnistgov/ACVP-Server",
+    "source_base": "gen-val/json-files"
+  },
+  "sqisign_kat": {
+    "commit": "6d017708db403bf83977fa70770fc4f7f9e9ff21",
+    "files": {
+      "PQCsignKAT_549_SQIsign_p664_17.rsp": "d3755945811f8eecb8004d1a8c02092311a700f59a4836378d3c54b91f7ec61a"
+    },
+    "repository": "https://github.com/SQIsign/the-sqisign"
+  }
+}

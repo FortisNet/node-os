@@ -39,7 +39,7 @@ docker run --rm --platform "$platform" --network none -v "$volume:/work" \
     [ "$(uname -m)" = "$ARCHITECTURE" ]
     [ "$(gcc -dumpfullversion)" = 15.2.0 ]
     apk info -v | grep -q "^musl-1.2.6-"
-    for entry in Makefile orchestrator sandbox lib tests tools image assets verify.py; do cp -a "/input/$entry" /work/; done
+    for entry in Makefile orchestrator sandbox lib keys third_party tests tools image assets verify.py; do cp -a "/input/$entry" /work/; done
     mkdir -p .deps && cp /input/.deps/mbedtls-3.6.7.tar.bz2 .deps/
     hardening_c=$(make -s -f tools/hardening.mk c)
     hardening_cxx=$(make -s -f tools/hardening.mk cxx)
