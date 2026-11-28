@@ -48,7 +48,7 @@ SANITIZER_OPTIONS = {'ASAN_OPTIONS': 'abort_on_error=1:detect_leaks=1',
                      'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1'}
 # The copies in lib/ keep the formatting of the node they came from; everything
 # else follows .clang-format.
-FORMATTED = ('orchestrator', 'sandbox', 'tests')
+FORMATTED = ('orchestrator', 'sandbox', 'tests', 'keys', 'keys/client')
 
 
 def input_hashes():

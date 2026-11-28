@@ -5,6 +5,8 @@
 | Folder | What it holds |
 | --- | --- |
 | [orchestrator/](../orchestrator) | One C++ program with several modes: it installs, starts, updates and recovers the node, owns the public ports, obtains certificates and serves a page when no node does |
+| [keys/](../keys) | The key service, `fortis-keyd`, which holds the node's identity keys, and in [keys/client/](../keys/client) the library the node uses to reach it ([fortis-did.md](fortis-did.md)). Not in the images yet |
+| [third_party/crypto/](../third_party/crypto) | ML-DSA-87 and SQIsign-V reference code, copied unchanged, only the files the key service links; [MANIFEST.json](../third_party/crypto/MANIFEST.json) pins each by hash |
 | [sandbox/](../sandbox) | The sandbox manager for running untrusted jobs under gVisor. Not part of the images yet |
 | [lib/](../lib) | Source files copied from the node: an HTTPS client, a JSON reader and small support headers. `ORIGIN.json` records where each came from |
 | [image/](../image) | Builds the disk and container images. [image/README.md](../image/README.md) lists exactly what is in them and why |
@@ -95,7 +97,10 @@ a very good reason.
 
 - **Small, and separate from the node.** This is the part that runs as
   administrator, so it is kept small enough to review. It builds from this
-  repository and Mbed TLS alone and includes nothing from the node.
+  repository and Mbed TLS alone and includes nothing from the node. The key
+  service is a separate program, under its own user, so the much larger
+  post-quantum code it needs never runs as administrator; it builds from this
+  repository, Mbed TLS and the unchanged copies in `third_party/crypto/`.
 - **The orchestrator runs no other program, except `crun`.** Signatures and
   hashes are checked with Mbed TLS, HTTPS is spoken by the client in `lib/`,
   and files are copied in-process. There is no shell, `curl`, `openssl` or
@@ -129,6 +134,9 @@ the new hash.
 What this repository and the node agree on is a contract, not shared code:
 
 - how listening sockets are handed to the node (`FORTIS_LISTEN_FDS`);
+- how the node reaches the key service (`FORTIS_KEYS_FD`) and the key
+  service's wire format and labelled signing ([fortis-did.md](fortis-did.md),
+  sections 9 to 11), once the orchestrator hands the connection over;
 - the layout of the certificate folder;
 - the node's health answers on its loopback port;
 - the signed release format (`manifest`, `manifest.sig`, `fortis-node`);

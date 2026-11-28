@@ -72,6 +72,9 @@ struct HostFacts {
   // While the host is still being set up: what it is waiting for, in one
   // plain sentence. Empty otherwise.
   std::string waiting_for;
+  // The node's public identity, when the key service has published it
+  // (docs/fortis-did.md); both empty otherwise.
+  std::string did, machine_id;
 };
 
 /** A date as the pages show it: "25 November 2026, 04:40 UTC". */

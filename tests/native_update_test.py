@@ -751,6 +751,38 @@ FORTIS_NATIVE_MIN_REQUESTS=0
         self.assertIn('<li class="off">Dashboard</li>', page)
         self.assertNotIn('href="/dashboard"', page)
 
+    def test_pages_show_the_public_identity(self):
+        # The key service publishes the public part of the identity; the pages show it.
+        keys = self.path / 'keys'
+        keys.mkdir()
+        with open(self.config, 'a') as config:
+            config.write(f'FORTIS_NATIVE_KEYS_STATE={keys}\n')
+        self.run_action('tick')
+        unknown = {'did': None, 'machine': None}
+        self.assertEqual(self.health()['identity'], unknown)
+        self.assertEqual(json.loads(self.published('node.json'))['identity'], unknown)
+        self.assertIn('Not created yet', self.published('index.html'))
+
+        did, machine = 'did:fortis:pq2:' + 'ab' * 64, 'cd' * 16
+        (keys / 'identity.public').write_text(f'did={did}\nmachine={machine}\n')
+        self.run_action('tick')
+        known = {'did': did, 'machine': machine}
+        self.assertEqual(self.health()['identity'], known)
+        self.assertEqual(json.loads(self.published('node.json'))['identity'], known)
+        for page in ('index.html', 'health.html'):
+            self.assertIn(f'<code class="did">{did}</code>', self.published(page))
+            self.assertIn(f'<code class="did">{machine}</code>', self.published(page))
+        # An identity is never shown from a file that is not exactly two well-formed values.
+        for bad in (f'did=did:fortis:pq2:{"AB" * 64}\nmachine={machine}\n',
+                    f'did={did}\nmachine={machine}\nextra=1\n',
+                    f'did={did}<script>\nmachine={machine}\n',
+                    f'did=did:fortis:pq1:{"ab" * 64}\nmachine={machine}\n',
+                    'x' * 600):
+            (keys / 'identity.public').write_text(bad)
+            self.run_action('tick')
+            self.assertEqual(self.health()['identity'], unknown, bad)
+            self.assertNotIn('<script>', self.published('index.html'))
+
     def test_pages_contain_nothing_private(self):
         self.env_file.write_text('NODE_ENV=development\nPROVIDER_API_KEY=secret-provider-key-123\n')
         self.run_action('update', self.release)

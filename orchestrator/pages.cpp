@@ -157,6 +157,21 @@ std::string NodeUpdates(const HostFacts& facts) {
   return out + "</dl>";
 }
 std::string JsonNumberOrNull(uint64_t value) { return value ? std::to_string(value) : "null"; }
+/** "identity":{"did":...,"machine":...}, null for each value not known. */
+std::string JsonIdentity(const HostFacts& facts) {
+  return ",\"identity\":{\"did\":" + (facts.did.empty() ? std::string("null") : Quote(facts.did)) +
+         ",\"machine\":" + (facts.machine_id.empty() ? std::string("null") : Quote(facts.machine_id)) + "}";
+}
+/** The identity in words, for both pages. A DID is long: it wraps anywhere. */
+std::string IdentityFacts(const HostFacts& facts) {
+  if (facts.did.empty())
+    return "<p class=\"note\">Not created yet. The key service makes this node's identity the first time it "
+           "starts.</p>";
+  return "<dl class=\"facts\"><dt>DID</dt><dd><code class=\"did\">" + Escape(facts.did) +
+         "</code></dd><dt>Machine</dt><dd><code class=\"did\">" + Escape(facts.machine_id) +
+         "</code></dd></dl><p class=\"note\">The node's post-quantum identity. Anyone can check its signatures "
+         "against this DID, without asking a registry.</p>";
+}
 /** Replace `path` in one step, without forcing it to storage: these files
  * are rewritten every few seconds and rebuilt from scratch after a restart. */
 void Replace(const fs::path& path, std::string_view bytes) {
@@ -186,8 +201,8 @@ std::string RenderHealthJson(const HostFacts& facts) {
                     ",\"status\":" + std::to_string(status) + ",\"healthy\":" + (status == 200 ? "true" : "false") +
                     ",\"orchestrator\":{\"version\":" + Quote(facts.orchestrator_version) +
                     ",\"architecture\":" + Quote(facts.architecture) + ",\"runsIn\":" + Quote(facts.runs_in) +
-                    ",\"checks\":" + JsonChecks(facts.orchestrator) +
-                    "},\"node\":{\"state\":" + Quote(facts.node_state);
+                    ",\"checks\":" + JsonChecks(facts.orchestrator) + "}" + JsonIdentity(facts) +
+                    ",\"node\":{\"state\":" + Quote(facts.node_state);
   if (!facts.node_version.empty())
     out += ",\"version\":" + Quote(facts.node_version) + ",\"sha256\":" + Quote(facts.node_sha256);
   return out + ",\"checks\":" + JsonChecks(facts.node) + "}}\n";
@@ -208,8 +223,8 @@ std::string RenderNodeJson(const HostFacts& facts) {
          ",\"hostInterfaceMin\":" + std::to_string(kHostInterfaceMin) +
          ",\"hostInterfaceMax\":" + std::to_string(kHostInterfaceMax) + ",\"channel\":" + Quote(facts.channel) +
          ",\"automaticUpdates\":" + (facts.automatic_updates ? "true" : "false") +
-         ",\"store\":" + (facts.store.empty() ? "null" : Quote(facts.store)) +
-         "},\"update\":{\"state\":" + Quote(update.state) + ",\"candidate\":";
+         ",\"store\":" + (facts.store.empty() ? "null" : Quote(facts.store)) + "}" + JsonIdentity(facts) +
+         ",\"update\":{\"state\":" + Quote(update.state) + ",\"candidate\":";
   if (update.candidate_version.empty()) out += "null";
   else
     out += "{\"version\":" + Quote(update.candidate_version) +
@@ -250,8 +265,9 @@ std::string RenderHealthPage(const HostFacts& facts) {
   if (!facts.node_version.empty()) node += " Release " + Escape(facts.node_version) + ".";
   node += "</p>" + (facts.node.empty() ? std::string() : Checks(facts.node));
   content += Section("node", "FortisNet node", "02 / NODE", node);
-  content += Section("updates", "Updates", "03 / RELEASES", NodeUpdates(facts));
-  content += Section("machines", "For monitoring tools", "04 / JSON",
+  content += Section("identity", "Identity", "03 / DID", IdentityFacts(facts));
+  content += Section("updates", "Updates", "04 / RELEASES", NodeUpdates(facts));
+  content += Section("machines", "For monitoring tools", "05 / JSON",
                      "<p class=\"note\">The same report is at <a href=\"/health.json\"><code>/health.json</code></a>. "
                      "Both answer 200 when the orchestrator and the node above are healthy and 503 otherwise. "
                      "Which release runs and what the host is doing about newer ones is at "
@@ -280,6 +296,7 @@ std::string RenderFirstPage(const HostFacts& facts) {
           Size(facts.disk_free_bytes) +
           " free</dd></dl><p class=\"note\"><a href=\"/health\">Health of this host &#8594;</a></p>";
   content += Section("host", "This host", "01 / HOST", host);
+  content += Section("identity", "Identity", "02 / DID", IdentityFacts(facts));
 
   std::string updates;
   if (facts.automatic_updates) {
@@ -300,7 +317,7 @@ std::string RenderFirstPage(const HostFacts& facts) {
   } else {
     updates = "<p class=\"note\">The installed release is the newest one published.</p>";
   }
-  content += Section("updates", "Updates", "02 / RELEASES", updates);
+  content += Section("updates", "Updates", "03 / RELEASES", updates);
 
   // Links into the node work only while it serves.
   const bool serving = Serving(facts);
@@ -316,8 +333,8 @@ std::string RenderFirstPage(const HostFacts& facts) {
   links += "</ul>";
   if (!serving)
     links += "<p class=\"note\">These belong to the node and are not available while it is not running.</p>";
-  content += Section("inside", "Inside the node", "03 / NODE", links);
-  content += Section("care", "Worth knowing", "04 / NOTES",
+  content += Section("inside", "Inside the node", "04 / NODE", links);
+  content += Section("care", "Worth knowing", "05 / NOTES",
                      "<p class=\"note\">Backups made here stay on this machine. Protection against losing the machine "
                      "itself needs the provider's backups or a copy kept elsewhere.</p>");
   const auto [headline, sentence] = StateWords(facts);

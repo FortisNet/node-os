@@ -149,6 +149,83 @@ does it.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
+## Fortis DID
+
+Each node has a **post-quantum identity**: a DID (`did:fortis:pq2:...`) that
+anyone can check without asking a registry, and three kinds of signing key,
+**ML-DSA-87** (FIPS 204), **SQIsign-V** and **secp256k1** for chain accounts
+(EVM and XRPL). The host shows the DID on its first page, its health page,
+and in `/health.json` and `/node.json`.
+
+The node program uses these keys, but it never holds them. They belong to
+**`fortis-keyd`**, a small key service that Node OS runs as its own user,
+next to the orchestrator:
+
+- **Created on the first start.** A new machine makes its complete identity
+  by itself. Nobody types anything. A lost identity file is never silently
+  replaced by a new DID.
+- **The node can sign, but not read a key.** The orchestrator hands the node
+  one end of a Unix socket (`FORTIS_KEYS_FD`). Through it the node asks for
+  public keys and signatures, with one function for each algorithm in a small
+  C++23 client library, and verifies signatures by itself.
+- **It cannot sign just anything.** Every signature carries a label that says
+  what it is for, so a node that has been taken over cannot make an Ethereum
+  transaction, a hello or a DID update out of it.
+- **Misuse leaves evidence.** Every signature carries the key service's own
+  stamp (machine, signature number, time) and is written to a signing log
+  before it is made. Other nodes can check a signature against that log,
+  starting from nothing but the DID, and two signatures with one number prove
+  that a machine's keys are in two places.
+- **Fast.** Asking the key service costs microseconds; the signatures
+  themselves take from a fraction of a millisecond to about 170 ms (SQIsign).
+  Signatures run in parallel on every core.
+- **Copied only on purpose (planned).** An administrator will be able to
+  copy an identity to another machine over SSH, encrypted to a one-time key
+  of that machine and to a passphrase. Several machines may then sign as the
+  same DID at once; each has its own machine key, so the administrator and
+  peers can tell them apart.
+- **Short-lived runtime keys (planned).** The node will sign with runtime
+  keys whose certificates last one day (one constant,
+  `kRuntimeCertificateLifetime`) and are renewed automatically.
+
+### Signing from the node
+
+The node never opens a key. It asks the key service, through the connection
+it was given:
+
+```cpp
+#include "key_client.h"   // from keys/client/, which the node copies
+using namespace fortis::keys;
+
+Client keys = Client::FromEnvironment();          // the connection in FORTIS_KEYS_FD
+const std::string text = "block 1042 received";
+const View message(reinterpret_cast<const uint8_t*>(text.data()), text.size());
+
+StampedSignature s = keys.Sign(Algorithm::SqiSignV, "gossip", message);  // label: what it is for
+Bytes to_send = EncodeStamped(s);                 // the stamp, then the signature
+
+// Any peer, with the node's public key and no key service:
+bool ok = Verify(Algorithm::SqiSignV, keys.PublicKey(Algorithm::SqiSignV), "gossip", message, to_send);
+```
+
+- **One function for every algorithm.** `Algorithm::MlDsa87`,
+  `Algorithm::SqiSignV` or `Algorithm::Secp256k1`, with any label.
+- **One channel per signing thread.** Each thread that signs takes its own
+  with `keys.OpenChannel()`, so signatures run in parallel on every core.
+- **Errors throw.** A refusal or a broken connection throws
+  `std::runtime_error`; nothing is retried.
+- **Public data for peers.** `Manifest()`, `MachineStatement()`,
+  `Checkpoint()` and `LogEntries()` return what peers need to check the
+  node's signatures against its signing log.
+
+The whole list, step by step, is
+[section 12 of the document](docs/fortis-did.md#12-using-it-from-the-node-in-c).
+
+The design, why each method was chosen, the protocol byte by byte, C++
+examples and what is done so far are in
+[docs/fortis-did.md](docs/fortis-did.md). It is being built now and is not in
+the images yet.
+
 ## Built in public
 
 "Built in public" means two things. Every file you can download was made by
@@ -271,6 +348,7 @@ that there are exactly these two is provisional and expected to change.
 | [docs/operating.md](docs/operating.md) | Reaching a host, its logs, the first page and the health report |
 | [docs/releases.md](docs/releases.md) | Publishing node releases, how hosts fetch them, automatic updates and their settings, and which releases a host can run |
 | [docs/backup.md](docs/backup.md) | Backup and restore |
+| [docs/fortis-did.md](docs/fortis-did.md) | The node's post-quantum identity and the key service that keeps its keys from the node |
 | [image/README.md](image/README.md) | Exactly what is in the images, and why |
 | [docs/development.md](docs/development.md) | Layout of the code, the gate, release builds and the rules the design keeps |
 | [docs/releasing.md](docs/releasing.md) | What the pipeline builds and publishes, how to check a download, and how a release is made |

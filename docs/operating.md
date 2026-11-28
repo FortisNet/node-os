@@ -87,10 +87,10 @@ writes five finished files, every few seconds and whenever something changes:
 
 | File | Shown at | What it is |
 | --- | --- | --- |
-| `index.html` | `/` | The first page: what this host is, the node's state in plain words, the installed release, what the host is doing about newer releases (or, without automatic updates, an available or staged update with the command to use), and links into the node |
-| `health.html` | `/health` | The health report as a page |
-| `health.json` | `/health.json` | The same report for monitoring tools, in a fixed, versioned form |
-| `node.json` | `/node.json` | Which release runs, what this Node OS can run, and what the host is doing about newer releases ([releases.md](releases.md#what-the-host-shows)) |
+| `index.html` | `/` | The first page: what this host is, the node's state in plain words, its public identity (DID), the installed release, what the host is doing about newer releases (or, without automatic updates, an available or staged update with the command to use), and links into the node |
+| `health.html` | `/health` | The health report as a page, with the node's DID |
+| `health.json` | `/health.json` | The same report for monitoring tools, in a fixed, versioned form; `identity` holds the DID and machine ID ([fortis-did.md](fortis-did.md#136-the-did-on-the-hosts-pages)) |
+| `node.json` | `/node.json` | Which release runs, what this Node OS can run, what the host is doing about newer releases ([releases.md](releases.md#what-the-host-shows)), and the node's `identity` |
 | `health.status` | | One line, `STATUS WRITTEN_MS`, so whoever serves the report can answer with the right status code and notice a report that nobody refreshes |
 
 - **Self-contained.** One file each: no script, and nothing loaded from
@@ -98,7 +98,8 @@ writes five finished files, every few seconds and whenever something changes:
   [assets/page-shell.html](../assets/page-shell.html) is the design; the
   build compiles it into the orchestrator.
 - **Nothing private.** No paths, keys, setting values, device identifiers or
-  provider answers.
+  provider answers. The node's DID and machine ID are shown because they are
+  public by design: every signature the node makes carries them.
 - **200 or 503.** `/health` and `/health.json` answer 200 only when every
   check is healthy and the node serves, and 503 when the report is more than
   a minute old. `/node.json` always answers 200: a newer release, or a

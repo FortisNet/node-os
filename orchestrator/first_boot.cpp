@@ -120,6 +120,7 @@ bool FirstBoot(const fs::path& config, const fs::path& prefix) {
                                           {"FORTIS_NATIVE_ACME_CHALLENGES", (var / "challenges").string()},
                                           {"FORTIS_NATIVE_ACME_STATE", (var / "acme").string()},
                                           {"FORTIS_NATIVE_FETCH_STATE", (var / "fetch").string()},
+                                          {"FORTIS_NATIVE_KEYS_STATE", (var / "keys").string()},
                                           // No release store is named here, so nothing is fetched until one is
                                           // set. These two say what the host does once it is: follow the stable
                                           // list and install from it by itself.
